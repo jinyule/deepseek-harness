@@ -43,6 +43,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../llm/llm-pi-ai-oauth"
+    },
+    {
       "path": "../../preset/agent-presets"
     },
     {

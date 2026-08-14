@@ -85,6 +85,12 @@
     - id: credentials
       name: '@deepseek-ai/dsh-credentials-local'
 
+    # Owner-only pi-ai OAuth credentials and provider-owned interactive login.
+    # The Models page uses this for subscription-backed providers such as
+    # openai-codex; refreshes remain serialized across harness processes.
+    - id: llm-pi-ai-oauth
+      name: '@deepseek-ai/dsh-llm-pi-ai-oauth'
+
     # The pi-ai multi-provider twin, mounted dormant: zero routes (and no extra
     # models in the picker) until a `llm-pi-ai:` settings section supplies provider
     # profiles — then those routes register live, keys resolving per request

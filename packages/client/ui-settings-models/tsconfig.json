@@ -36,6 +36,12 @@
       "path": "../../runtime-diagnostics/invariants"
     },
     {
+      "path": "../../llm/llm-pi-ai-oauth"
+    },
+    {
+      "path": "../../typert/protocol"
+    },
+    {
       "path": "../../api/remotes/tsconfig.client.json"
     }
   ]

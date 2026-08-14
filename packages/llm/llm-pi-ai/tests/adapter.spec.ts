@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Buffer } from 'node:buffer'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId, AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type {
@@ -12,6 +13,7 @@ import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import type { Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai'
 import { resolveProfiles } from '../src/config.ts'
 import { assemble } from './assemble.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
@@ -57,6 +59,52 @@ beforeEach(() => {
 })
 
 describe('PiAiAdapter provider routing', () => {
+  it('uses the injected OAuth store for an OpenAI Codex request', async () => {
+    const server = await mockServer([{
+      status: 401,
+      body: JSON.stringify({ error: { message: 'expected mock failure' } }),
+    }])
+    const access = `e30.${Buffer.from(JSON.stringify({
+      'https://api.openai.com/auth': { chatgpt_account_id: 'account-1' },
+    })).toString('base64url')}.signature`
+    let credential: Credential | undefined = {
+      type: 'oauth',
+      access,
+      refresh: 'oauth-refresh',
+      expires: Date.now() + 60_000,
+      accountId: 'account-1',
+    }
+    const credentials: CredentialStore = {
+      read: () => Promise.resolve(credential),
+      list: (): Promise<readonly CredentialInfo[]> => Promise.resolve([{ providerId: 'openai-codex', type: 'oauth' }]),
+      modify: async (_provider, fn) => {
+        const next = await fn(credential)
+        if (next !== undefined) credential = next
+        return credential
+      },
+      delete: () => { credential = undefined; return Promise.resolve() },
+    }
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    const adapter = new PiAiAdapter({
+      profiles: () => resolveProfiles({ 'openai-codex': { baseURL: server.url } }),
+      resolveApiKey: () => Promise.resolve(undefined),
+      resolveCredentialStore: () => credentials,
+    })
+    ctx.llm.registerAdapter(['openai-codex'], adapter)
+
+    const result = await assemble(ctx, {
+      provider: 'openai-codex',
+      model: 'gpt-5.4',
+      messages: [],
+    })
+
+    expect(result.finish.kind).toBe('error')
+    expect(server.paths).not.toEqual([])
+    expect(server.headers[0]?.authorization).toBe(`Bearer ${access}`)
+    expect(server.headers[0]?.['chatgpt-account-id']).toBe('account-1')
+  })
+
   it('resolves a catalog model dynamically and uses a private endpoint', async () => {
     const server = await mockServer([{ events: textEvents }])
     const ctx = await harness(server.url)

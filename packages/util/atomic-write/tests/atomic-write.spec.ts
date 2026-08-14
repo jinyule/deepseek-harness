@@ -48,6 +48,12 @@ describe('writeFileAtomic', () => {
 })
 
 describe('withFileLock', () => {
+  it('validates a caller-selected lock timeout before opening the lock', async () => {
+    const dir = await scratch()
+    await expect(withFileLock(join(dir, 'document'), async () => undefined, { timeoutMs: 0 }))
+      .rejects.toThrow('timeoutMs must be a positive safe integer')
+  })
+
   it('rejects an invalid parent hierarchy before running the operation', async () => {
     const dir = await scratch()
     const parent = join(dir, 'not-a-directory')

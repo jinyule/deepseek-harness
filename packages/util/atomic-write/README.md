@@ -20,6 +20,8 @@ await withFileLock('/home/u/.dsh/settings.yaml', async () => {
 })
 ```
 
+Pass `{ timeoutMs }` as the third argument when the protected read-modify-write legitimately includes a slow external operation. The default remains 2 seconds.
+
 `writeFileAtomic` commits one already-rendered string. The contract, in the order failures would exploit it:
 
 - **Exclusive-create temp** (`wx`, random suffix): the open refuses to follow a symlink planted at a guessable temp path.

@@ -78,6 +78,21 @@ const LOCK_RETRY_INITIAL_MS = 20
 const LOCK_RETRY_MAX_MS = 200
 const LOCK_TIMEOUT_MS = 2_000
 
+/** Optional contention policy for {@link withFileLock}. */
+export interface FileLockOptions {
+  /** Maximum milliseconds to wait for another writer; defaults to 2,000. */
+  timeoutMs?: number
+}
+
+/** Resolve and validate the caller-selected lock deadline. */
+function resolveLockTimeout(options: FileLockOptions | undefined): number {
+  const timeoutMs = options?.timeoutMs ?? LOCK_TIMEOUT_MS
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new TypeError(`atomic-write: timeoutMs must be a positive safe integer, got ${String(timeoutMs)}`)
+  }
+  return timeoutMs
+}
+
 /**
  * Hold the cross-process writer lock for `filename` around one operation. The
  * lock is a `wx`-created sibling (`<filename>.lock`); paired with the
@@ -88,14 +103,16 @@ const LOCK_TIMEOUT_MS = 2_000
  * is an operator action. The parent directory must exist.
  * @param filename - the file whose writers this lock serializes.
  * @param operation - the read-render-commit cycle to run while holding the lock.
+ * @param options - optional contention deadline for operations that legitimately hold the lock during network I/O.
  * @returns the operation's result; the lock releases on both outcomes.
  */
 export async function withFileLock<T>(
   filename: string,
   operation: () => Promise<T>,
+  options?: FileLockOptions,
 ): Promise<T> {
   const lockPath = `${filename}.lock`
-  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  const deadline = Date.now() + resolveLockTimeout(options)
   let delay = LOCK_RETRY_INITIAL_MS
   for (;;) {
     try {

@@ -20,6 +20,8 @@ await withFileLock('/home/u/.dsh/settings.yaml', async () => {
 })
 ```
 
+当受保护的读取—修改—写入确实包含较慢的外部操作时，可将 `{ timeoutMs }` 作为第三个参数传入。默认值仍为 2 秒。
+
 `writeFileAtomic` 提交一份已经渲染好的字符串。约定按故障利用它的先后顺序列出：
 
 - **独占创建临时文件**（`wx` + 随机后缀）：open 拒绝跟随预先埋在可猜测临时路径上的符号链接。

@@ -13,10 +13,11 @@
  * way down: switching models mid-reply takes effect on the next step, never
  * inside the one in flight.
  *
- * Credentials stay outside that collection. The harness resolves a route's key
- * through its own seam and passes it as the request's `apiKey` option, which
- * pi-ai treats as the highest-priority auth override — so `Models` never holds
- * a credential store and the harness keeps its fail-loud reference semantics.
+ * API keys stay outside that collection. The harness resolves a named key
+ * through its own seam and passes it as pi-ai's highest-priority per-request
+ * override. When the optional pi-ai OAuth service is mounted, its durable
+ * CredentialStore identity also participates in the snapshot and serves
+ * provider-native OAuth, including locked token refresh.
  *
  * @module dsh-llm-pi-ai/adapter
  */
@@ -24,6 +25,7 @@
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type {
   Api,
+  CredentialStore,
   Model,
   Models,
   ModelThinkingLevel,
@@ -59,6 +61,8 @@ interface PiAiSnapshot {
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /** Providers for exactly those profiles; never mutated once published. */
   models: Models
+  /** Credential store identity this collection resolves provider-native auth through. */
+  credentials: CredentialStore | undefined
 }
 
 /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
@@ -74,6 +78,8 @@ export interface PiAiAdapterOptions {
    * `MISSING_CREDENTIAL` rather than falling back.
    */
   resolveApiKey: (provider: string, profile: ResolvedPiAiProviderProfile) => Promise<string | undefined>
+  /** Resolve the optional pi-ai credential store at operation time. */
+  resolveCredentialStore?: () => CredentialStore | undefined
   /** Resolve the optional durable attachment service at request time. */
   resolveAttachments?: () => AttachmentStore | undefined
 }
@@ -198,10 +204,11 @@ export class PiAiAdapter extends LlmAdapter {
    */
   private current(): PiAiSnapshot {
     const profiles = this.config.profiles()
-    if (this.snapshot?.profiles === profiles) return this.snapshot
-    const models: MutableModels = createModels()
+    const credentials = this.config.resolveCredentialStore?.()
+    if (this.snapshot?.profiles === profiles && this.snapshot.credentials === credentials) return this.snapshot
+    const models: MutableModels = createModels(credentials === undefined ? {} : { credentials })
     for (const profile of profiles.values()) models.setProvider(profile.piProvider)
-    this.snapshot = { profiles, models }
+    this.snapshot = { profiles, models, credentials }
     return this.snapshot
   }
 

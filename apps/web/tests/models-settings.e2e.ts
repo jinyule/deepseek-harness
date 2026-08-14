@@ -7,7 +7,7 @@
 // provider status. The customized-settings fold writes its curated fields —
 // the endpoint, and a declared route's own name and protocol — as merge
 // patches against the stored profile. Zero model calls: configuration is pure
-// settings/credentials/llm-domain traffic, so there is no fixture and a
+// settings/credentials/llm/OAuth-domain traffic, so there is no fixture and a
 // stray stream would fail loud because the adapter registry is empty. The provider under test is
 // minimax-cn so a developer's real ANTHROPIC/OPENAI environment keys can
 // never shadow the derived reference. The deletion dialog distinguishes a
@@ -27,6 +27,7 @@ import { ZH_BROWSER_LOCALE, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/models-settings', import.meta.url))
 const EMPTY_EXPECTED = join(SNAPSHOT_DIR, 'empty.expected.md')
+const OAUTH_EXPECTED = join(SNAPSHOT_DIR, 'oauth.expected.md')
 const CONFIGURED_EXPECTED = join(SNAPSHOT_DIR, 'configured.expected.md')
 const DECLARED_EXPECTED = join(SNAPSHOT_DIR, 'declared.expected.md')
 const DECLARED_EDIT_EXPECTED = join(SNAPSHOT_DIR, 'declared-edit.expected.md')
@@ -47,7 +48,13 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     tripwire = watchConsole(page)
     await page.goto(scaffold.baseUrl, { waitUntil: 'load' })
-    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    try {
+      await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'page readiness failed'
+      const body = (await page.locator('body').innerText()).slice(0, 2_000)
+      throw new Error(`${message}\npage errors: ${JSON.stringify(tripwire.pageErrors)}\nbody: ${body}`)
+    }
   }, 120_000)
 
   afterAll(async () => {
@@ -75,10 +82,32 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     const options = await pick.locator('option').allTextContents()
     expect(options).toContain('anthropic')
     expect(options).toContain('minimax-cn')
+    expect(options).toContain('openai-codex')
     await pick.selectOption('minimax-cn')
     await dialog.getByRole('textbox', { name: 'API 密钥', exact: true }).waitFor({ timeout: 10_000 })
     const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(EMPTY_EXPECTED, snapshot, MODE)
+  }, 60_000)
+
+  it('renders an OAuth-only provider as a subscription login instead of an API-key form', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-models-oauth'))
+    const dialog = page.getByRole('dialog', { name: '设置' })
+    const pick = dialog.getByLabel('提供方')
+    await pick.selectOption('openai-codex')
+    await dialog.getByText('OpenAI (ChatGPT Plus/Pro)', { exact: true }).waitFor({ timeout: 10_000 })
+    await dialog.getByText('请连接订阅账号后使用此提供方。', { exact: true }).waitFor({ timeout: 10_000 })
+    await dialog.getByRole('button', { name: '登录', exact: true }).waitFor({ timeout: 10_000 })
+    expect(await dialog.getByRole('textbox', { name: 'API 密钥', exact: true }).count()).toBe(0)
+    await expect.poll(
+      async () => dialog.getByRole('button', { name: '保存', exact: true }).isEnabled(),
+      { timeout: 10_000 },
+    ).toBe(false)
+    const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
+    await compareOrRefreshGolden(OAUTH_EXPECTED, snapshot, MODE)
+
+    // Restore the API-key provider selected by the rest of this serial scenario.
+    await pick.selectOption('minimax-cn')
+    await dialog.getByRole('textbox', { name: 'API 密钥', exact: true }).waitFor({ timeout: 10_000 })
   }, 60_000)
 
   it('refuses a key no HTTP header can carry before anything is written', async () => {
@@ -280,7 +309,7 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, [
       'configured.expected.md', 'declared-edit.expected.md', 'declared.expected.md',
-      'delete.expected.md', 'empty.expected.md', 'native-delete.expected.md',
+      'delete.expected.md', 'empty.expected.md', 'native-delete.expected.md', 'oauth.expected.md',
     ])
   })
 })

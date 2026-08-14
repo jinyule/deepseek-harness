@@ -1081,6 +1081,24 @@ Depends on: `Api` (`@earendil-works/pi-ai`) · `CacheRetention` (`@earendil-work
 
 Source: [`packages/llm/llm-pi-ai/src/config.ts:172`](../packages/llm/llm-pi-ai/src/config.ts)
 
+<a id="deepseek-aidsh-llm-pi-ai-oauth"></a>
+
+## `@deepseek-ai/dsh-llm-pi-ai-oauth`
+
+```ts config-catalog
+/** Plugin configuration. */
+export interface Config {
+  /** Credential document path; defaults below the harness home. */
+  path?: string
+  /** Harness home used when `path` is omitted; defaults to `$DSH_HOME` or `~/.dsh`. */
+  dshHome?: string
+  /** Maximum wait for another process's refresh/login write lock, in milliseconds. */
+  lockTimeoutMs?: number
+}
+```
+
+Source: [`packages/llm/llm-pi-ai-oauth/src/index.ts:45`](../packages/llm/llm-pi-ai-oauth/src/index.ts)
+
 <a id="deepseek-aidsh-llm-replay"></a>
 
 ## `@deepseek-ai/dsh-llm-replay`

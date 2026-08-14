@@ -934,6 +934,60 @@ describe('ModelsSection', () => {
     expect(set).not.toHaveBeenCalled()
   })
 
+  it('refreshes an open add card when OAuth becomes configured', async () => {
+    const { face } = scriptedFace()
+    face.llm.providers.mockResolvedValue(ok({
+      providers: [
+        {
+          provider: 'openai', displayName: 'openai', settingsNs: 'llm-pi-ai',
+          settingsPath: ['providers', 'openai'], active: true,
+        },
+        {
+          provider: 'openai-codex', displayName: 'OpenAI Codex', settingsNs: 'llm-pi-ai',
+          settingsPath: ['providers', 'openai-codex'], active: true,
+        },
+      ],
+    }))
+    let configured = false
+    const remote = {
+      describe: vi.fn(() => Promise.resolve({
+        ok: true as const,
+        value: { providers: [{
+          provider: 'openai-codex',
+          displayName: 'OpenAI Codex',
+          authName: 'OpenAI (ChatGPT Plus/Pro)',
+          configured,
+          oauthOnly: true,
+          loginActive: false,
+        }] },
+      })),
+      start: vi.fn(),
+      answer: vi.fn(),
+      cancel: vi.fn(),
+      logout: vi.fn(),
+    }
+    const oauth = { remote, onLoginEvent: vi.fn(() => vi.fn()) }
+    const controller = new ModelsSettingsStore(face as unknown as WireFace, remote)
+    await controller.load()
+    render(<ModelsSection
+      controller={controller}
+      useSnapshot={bindSnapshotSelector(controller.store)}
+      api={face as never}
+      oauth={oauth as never}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByText(en.add))
+    const pick = await screen.findByLabelText<HTMLSelectElement>(en.provider)
+    fireEvent.change(pick, { target: { value: 'openai-codex' } })
+    expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(true)
+
+    configured = true
+    await act(async () => { await controller.load() })
+    expect(screen.getByText(en.oauthSignOut)).toBeTruthy()
+    expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(false)
+  })
+
   it('retries only the credential after refreshed settings already committed', async () => {
     const committed = wireNamespaces()[2]!
     const afterSettings: SettingsNamespaceView = {

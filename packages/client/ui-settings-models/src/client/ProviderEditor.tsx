@@ -33,6 +33,9 @@ import {
 import { apiKeyFailure } from './apiKey.ts'
 import { EditorFooter } from './EditorFooter.tsx'
 import { ModelListEditor } from './ModelListEditor.tsx'
+import { PiAiOAuthLogin } from './PiAiOAuthLogin.tsx'
+import type { PiAiOAuthClient } from './PiAiOAuthLogin.tsx'
+import type { PiAiOAuthProviderView } from '@deepseek-ai/dsh-llm-pi-ai-oauth/types'
 import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
@@ -69,6 +72,8 @@ export interface ProviderEditorProps {
   t: (key: keyof typeof en) => string
   /** Disable writes (read-only settings provider). */
   readOnly: boolean
+  /** Provider-native OAuth state and interaction, when this route offers it. */
+  oauth?: { provider: PiAiOAuthProviderView; client: PiAiOAuthClient; onChanged: () => void }
   /** Render only the credential field and actions, without provider settings. */
   credentialOnly?: boolean
   /** Require a newly entered credential before this editor can submit. */
@@ -359,7 +364,18 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     }
     return (
       <>
-        <div className={styles['field']}>
+        {props.oauth === undefined
+          ? null
+          : (
+            <PiAiOAuthLogin
+              provider={props.oauth.provider}
+              client={props.oauth.client}
+              t={t}
+              readOnly={props.readOnly}
+              onChanged={props.oauth.onChanged}
+            />
+          )}
+        {props.oauth?.provider.oauthOnly === true ? null : <div className={styles['field']}>
           <span className={styles['fieldLabel']}>{t('keyInput')}</span>
           <input
             className={styles['input']}
@@ -375,7 +391,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
             onChange={(event) => { setKeyDraft(event.target.value) }}
           />
           {shownKeyFailure === undefined ? null : <p className={styles['error']}>{t(shownKeyFailure)}</p>}
-        </div>
+        </div>}
         {props.credentialOnly === true ? null : <details className={styles['customized']}>
           <summary className={styles['customizedSummary']}>{t('customized')}</summary>
           <div className={styles['customizedBody']}>
@@ -494,6 +510,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
         t={t}
         busy={busy}
         submitDisabled={disabled || layout === 'unknown'
+          || (props.oauth?.provider.oauthOnly === true && !props.oauth.provider.configured)
           || (props.credentialOnly !== true && modelFailure !== undefined)
           || shownKeyFailure !== undefined
           || (props.credentialRequired === true && keyValue.length === 0)}

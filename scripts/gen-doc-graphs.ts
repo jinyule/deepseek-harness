@@ -115,6 +115,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Adapters register provider implementations; the loop and compaction call the provider-neutral stream service.',
   },
   {
+    key: 'piAiOAuth',
+    pkg: 'llm-pi-ai-oauth',
+    title: 'pi-ai OAuth credential service',
+    mode: 'core',
+    consumers: ['llm-pi-ai', 'apiproxy'],
+    note: 'Owns the durable pi-ai credential store, serialized refresh and interactive login; llm-pi-ai injects the exact store into provider collections and the Host API forwards its value-free login events.',
+  },
+  {
     key: 'tokenMeter',
     pkg: 'token-meter',
     title: 'Replay token measurement',

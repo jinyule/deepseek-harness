@@ -8,6 +8,7 @@
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
+import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
 // Type-only: pulls the shell's SlotMap merge (the 'settings.section' entry).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -24,6 +25,7 @@ import { WelcomeNotice } from './WelcomeNotice.tsx'
 import type { WelcomeNoticeInjected } from './WelcomeNotice.tsx'
 import { refreshWelcomeIfLoaded, WelcomeNoticeStore } from './welcome-store.ts'
 import { ModelsSettingsStore } from './store.ts'
+import type { PiAiOAuthClient } from './PiAiOAuthLogin.tsx'
 import { en, zh, type ModelsKey } from './locales.ts'
 import { WELCOME_NOTICE_SETTINGS_NAMESPACE } from '../onboarding-copy.ts'
 
@@ -68,7 +70,14 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-models: copy dictionaries')
 
   const connection = ctx.get('connection') as ConnectionHandle
-  const controller = new ModelsSettingsStore(connection.api)
+  const oauthRemote = ctx.get('remote.piAiOAuth') as unknown as TypertClientRemote['piAiOAuth'] | undefined
+  const oauth: PiAiOAuthClient | undefined = oauthRemote === undefined
+    ? undefined
+    : {
+      remote: oauthRemote,
+      onLoginEvent: listener => ctx.remote.$on('pi-ai-oauth/login-event', listener),
+    }
+  const controller = new ModelsSettingsStore(connection.api, oauthRemote)
   const useSnapshot = bindSnapshotSelector(controller.store)
   // Registration-time text (the nav label thunk) and the inject faces share
   // one bound translate; copy freshness rides the locale revision.
@@ -77,6 +86,7 @@ export function apply(ctx: ClientContext): void {
     controller,
     useSnapshot,
     api: connection.api,
+    ...oauth === undefined ? {} : { oauth },
     t,
   })
   const deepSeekOnboardingInjected = (): DeepSeekOnboardingInjected => ({
@@ -110,6 +120,7 @@ export function apply(ctx: ClientContext): void {
       }),
       ctx.remote.$on('credentials/updated', refreshModels),
       ctx.remote.$on('llm/adapters-updated', refreshModels),
+      ctx.remote.$on('pi-ai-oauth/updated', refreshModels),
       ctx.on('connection/reset', refreshAll),
     ]
     return () => { for (const dispose of disposers) dispose() }

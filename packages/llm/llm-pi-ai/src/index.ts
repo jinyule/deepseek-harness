@@ -60,6 +60,7 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { PiAiOAuthService } from '@deepseek-ai/dsh-llm-pi-ai-oauth'
 import { PiAiAdapter } from './adapter.ts'
 import { catalogProviderIds, catalogProviderTakesApiKey } from './catalog.ts'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
@@ -112,13 +113,15 @@ function registrationFacts(profiles: ReadonlyMap<string, ResolvedPiAiProviderPro
  * edit it.
  *
  * The profile half is unconditional, which is what keeps a route already
- * stored against a withheld provider editable and deletable rather than
+ * stored against a provider unavailable in the current composition editable and deletable rather than
  * stranded in the settings document with nothing on the page to remove it.
  * @param profiles - the currently resolved provider profiles.
+ * @param supportsOAuth - whether the optional provider-native OAuth service can serve a route.
  * @returns the directory entries in catalog order, declared routes last.
  */
 function directoryEntries(
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>,
+  supportsOAuth: (provider: string) => boolean,
 ): LlmConfigurableProvider[] {
   const catalog = new Set(catalogProviderIds())
   const entries = new Map<string, LlmConfigurableProvider>()
@@ -134,13 +137,8 @@ function directoryEntries(
       declared: !catalog.has(provider),
     })
   }
-  // A provider whose only native method is OAuth leaves this adapter nothing
-  // to authenticate with, so offering it would put a card on the settings page
-  // whose own posture — no key, credentials discovered by the provider — fails
-  // every request. Catalog *membership* is unaffected, so `declare` above still
-  // answers what pi-ai ships.
   for (const provider of catalog) {
-    if (catalogProviderTakesApiKey(provider)) declare(provider, provider)
+    if (catalogProviderTakesApiKey(provider) || supportsOAuth(provider)) declare(provider, provider)
   }
   for (const [provider, profile] of profiles) declare(provider, profile.displayName)
   return [...entries.values()]
@@ -148,6 +146,7 @@ function directoryEntries(
 
 /** Register one generic pi-ai adapter for all configured provider routes. */
 export function apply(ctx: Context, config: Config): void {
+  let oauth: PiAiOAuthService | undefined
   let current: () => Config = () => config
   let lastRaw: Config | undefined
   let memoized: ReadonlyMap<string, ResolvedPiAiProviderProfile> | undefined
@@ -200,6 +199,7 @@ export function apply(ctx: Context, config: Config): void {
   const adapter = new PiAiAdapter({
     profiles,
     resolveApiKey,
+    resolveCredentialStore: () => oauth,
     resolveAttachments: () => ctx.get('attachments'),
   })
   // The full installed catalog is configurable from the moment the plugin
@@ -209,7 +209,7 @@ export function apply(ctx: Context, config: Config): void {
   let directory: DirectoryRegistrationHandle | undefined
   let directoryFacts: unknown
   const ensureDirectory = (): void => {
-    const entries = directoryEntries(profiles())
+    const entries = directoryEntries(profiles(), provider => oauth?.supports(provider) === true)
     if (deepEqualJson(entries, directoryFacts)) return
     // Atomic replace, never dispose-then-register: a route another adapter
     // family already declares (a profile keyed `deepseek-official`) would
@@ -224,6 +224,17 @@ export function apply(ctx: Context, config: Config): void {
     directoryFacts = entries
   }
   ensureDirectory()
+  // The OAuth store is optional for API-key-only compositions. Rebuild the
+  // directory as it appears or leaves so OAuth-only catalog routes are offered
+  // exactly while provider-native authentication can serve them.
+  ctx.inject(['piAiOAuth'], (oauthCtx) => {
+    oauth = oauthCtx.piAiOAuth
+    ensureDirectory()
+    return () => {
+      oauth = undefined
+      ensureDirectory()
+    }
+  })
   /**
    * The credential a named route already resolves, for an interrogation whose
    * draft carries none. A route being declared for the first time names no

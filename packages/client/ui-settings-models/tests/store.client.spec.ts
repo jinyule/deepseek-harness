@@ -1,7 +1,7 @@
 /** Page-store join: directory × namespaces × credentials, with last-good rows on failure. */
 import { describe, expect, it } from 'vitest'
 import type { RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
-import { messageOf, ModelsSettingsStore } from '../src/client/store.ts'
+import { messageOf, ModelsSettingsStore, providerUsable } from '../src/client/store.ts'
 
 let nextRpc = 0
 function ok<T>(value: T): RpcResponse<T> {
@@ -70,6 +70,36 @@ function api(overrides: {
 }
 
 describe('ModelsSettingsStore', () => {
+  it('joins OAuth-only readiness from the provider-native auth service', async () => {
+    const { face } = api({
+      providers: () => Promise.resolve(ok({ providers: [{
+        provider: 'openai-codex',
+        displayName: 'OpenAI Codex',
+        settingsNs: 'llm-pi-ai',
+        settingsPath: ['providers', 'openai-codex'],
+        active: true,
+      }] as never })),
+    })
+    const oauth = {
+      describe: () => Promise.resolve({
+        ok: true as const,
+        value: { providers: [{
+          provider: 'openai-codex',
+          displayName: 'OpenAI Codex',
+          authName: 'OpenAI (ChatGPT Plus/Pro)',
+          configured: false,
+          oauthOnly: true,
+          loginActive: false,
+        }] },
+      }),
+    }
+    const store = new ModelsSettingsStore(face, oauth)
+    await store.load()
+    const row = store.store.getSnapshot().rows[0]!
+    expect(row.oauth).toMatchObject({ provider: 'openai-codex', oauthOnly: true, configured: false })
+    expect(providerUsable(row)).toBe(false)
+  })
+
   it('joins rows with configured, removable, and credential state', async () => {
     const { face, seenRefs } = api()
     const store = new ModelsSettingsStore(face)

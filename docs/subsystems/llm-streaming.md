@@ -837,6 +837,85 @@ stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 
 Source: [`packages/llm/llm/src/index.ts:284`](../../packages/llm/llm/src/index.ts)
 
+<a id="ctxpiaioauth--piaioauthservice"></a>
+
+### `ctx.piAiOAuth` — `PiAiOAuthService`
+
+Durable OAuth service and the exact CredentialStore injected into pi-ai.
+
+```ts cordis-catalog
+/**
+ * Whether the installed pi-ai provider offers OAuth.
+ * @param provider - pi-ai provider route id.
+ * @returns whether this service can authenticate the route through OAuth.
+ */
+supports(provider: string): boolean
+
+/**
+ * Read a stored credential snapshot without refreshing it.
+ * @param providerId - pi-ai provider route id.
+ * @returns a cloned credential, or `undefined` when none is stored.
+ */
+async read(providerId: string): Promise<PiAiCredential | undefined>
+
+/**
+ * List non-secret metadata without resolving provider auth.
+ * @returns stored provider ids and credential types.
+ */
+async list(): Promise<readonly PiAiCredentialInfo[]>
+
+/**
+ * Serialize a provider mutation across processes. The callback remains under
+ * the lock because pi-ai performs refresh there to prevent token rotation races.
+ * @param providerId - pi-ai provider route id.
+ * @param fn - provider-owned mutation, including any refresh exchange.
+ * @returns the replacement credential or the unchanged stored value.
+ */
+modify( providerId: string, fn: (current: PiAiCredential | undefined) => Promise<PiAiCredential | undefined>, ): Promise<PiAiCredential | undefined>
+
+/**
+ * Delete one credential while serialized against refresh and login writes.
+ * @param providerId - pi-ai provider route id.
+ */
+delete(providerId: string): Promise<void>
+
+/**
+ * Current OAuth provider and durable-login state.
+ * @returns non-secret provider metadata and login status.
+ */
+@Remote('describe') async describe(): Promise<PiAiOAuthDescribeValue>
+
+/**
+ * Start one provider-owned login and return before its interaction settles.
+ * @param request - provider whose OAuth flow should start.
+ * @returns command acknowledgement or a stable state rejection.
+ */
+@Remote('start') start(request: PiAiOAuthStartRequest): PiAiOAuthCommandResult
+
+/**
+ * Answer the exact outstanding prompt.
+ * @param request - provider, opaque prompt id, and user answer.
+ * @returns command acknowledgement or a stable prompt-state rejection.
+ */
+@Remote('answer') answer(request: PiAiOAuthAnswerRequest): PiAiOAuthCommandResult
+
+/**
+ * Cancel one active provider login.
+ * @param request - provider whose login should be cancelled.
+ * @returns command acknowledgement or a stable state rejection.
+ */
+@Remote('cancel') cancel(request: PiAiOAuthProviderRequest): PiAiOAuthCommandResult
+
+/**
+ * Remove one stored OAuth credential through pi-ai's own logout path.
+ * @param request - provider whose durable credential should be removed.
+ * @returns command acknowledgement or a stable provider-state rejection.
+ */
+@Remote('logout') async logout(request: PiAiOAuthProviderRequest): Promise<PiAiOAuthCommandResult>
+```
+
+Source: [`packages/llm/llm-pi-ai-oauth/src/index.ts:248`](../../packages/llm/llm-pi-ai-oauth/src/index.ts)
+
 <a id="llm-events"></a>
 
 ### `llm/*` events
@@ -885,4 +964,43 @@ Waterfall around every streaming model call (retry, replay, routing). Bound to t
 ```
 
 Source: [`packages/llm/llm/src/index.ts:64`](../../packages/llm/llm/src/index.ts)
+
+<a id="pi-ai-oauth-events"></a>
+
+### `pi-ai-oauth/*` events
+
+<a id="pi-ai-oauthlogin-event--emit"></a>
+
+#### `pi-ai-oauth/login-event` — emit
+
+Reports non-secret progress from one provider-owned login to local and Remote listeners.
+
+```ts cordis-catalog
+/**
+ * Reports non-secret progress from one provider-owned login to local and Remote listeners.
+ * @mode emit
+ * @param provider - pi-ai provider route id.
+ * @param event - non-secret login progress.
+ */
+'pi-ai-oauth/login-event'(provider: string, event: PiAiOAuthLoginEvent): void
+```
+
+Source: [`packages/llm/llm-pi-ai-oauth/src/types.ts:119`](../../packages/llm/llm-pi-ai-oauth/src/types.ts)
+
+<a id="pi-ai-oauthupdated--emit"></a>
+
+#### `pi-ai-oauth/updated` — emit
+
+Invalidates status after one provider's durable credential or login lifecycle changes.
+
+```ts cordis-catalog
+/**
+ * Invalidates status after one provider's durable credential or login lifecycle changes.
+ * @mode emit
+ * @param provider - pi-ai provider whose durable or login state changed.
+ */
+'pi-ai-oauth/updated'(provider: string): void
+```
+
+Source: [`packages/llm/llm-pi-ai-oauth/src/types.ts:125`](../../packages/llm/llm-pi-ai-oauth/src/types.ts)
 <!-- END GENERATED cordis-surface -->

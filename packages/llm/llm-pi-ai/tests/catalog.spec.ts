@@ -9,6 +9,7 @@ import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
+import PiAiOAuthService from '@deepseek-ai/dsh-llm-pi-ai-oauth'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type { Api, Model, OpenAICompletionsCompat, Provider } from '@earendil-works/pi-ai'
@@ -950,6 +951,16 @@ describe('configurable-provider directory', () => {
     // the key is a path this adapter can serve.
     expect(offered).toContain('anthropic')
     expect(offered).toContain('openai')
+  })
+
+  it('offers OAuth-only catalog routes while the OAuth service is mounted', async () => {
+    const dir = await home()
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(PiAiOAuthService, { path: join(dir, '.pi-ai-oauth.json') })
+    await ctx.plugin(LlmPiAi, {})
+
+    expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toContain('openai-codex')
   })
 
   it('still lists a withheld route a stored profile names, as a catalog route', async () => {

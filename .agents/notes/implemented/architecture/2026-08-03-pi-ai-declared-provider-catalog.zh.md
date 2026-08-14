@@ -38,13 +38,13 @@ pi-ai 把没有推理元数据的模型报告为只支持 `off` 一档，而适�
 
 因此只要 `model.reasoning` 为假，`reasoningInfo` 就省略 Service Definition 的 `reasoning` 字段。判据是模型自身的元数据，而非模型的来源，所以它覆盖条目未声明 `reasoningEfforts` 的每一个手工声明模型（[[2026-08-08-pi-ai-per-model-reasoning-declarations]] 让声明的档位携带这份元数据）**以及** pi-ai 标记为不具备推理能力的那 251 个已安装 catalog 模型。它们此前提供那个孤零零的 `off`，现在什么也不提供，界面只剩提供方默认。携带推理元数据的模型不受影响——其档位列表仍不经筛选地穿过 seam、`off` 也在内，因为在那里它是在真实备选之间做选择。
 
-### 凭据留在 pi-ai 之外
+### API-key 凭据留在 pi-ai 之外
 
-pi-ai 的 `Models` 自带一套凭据概念——按提供方 ID 索引的 `CredentialStore`，配合 `envApiKeyAuth` 解析 `credential.key ?? env(VAR)`。采用它会在 `ctx.credentials` 之外制造第二个凭据真源，更糟的是会把 harness 明确禁止的环境回落重新引进来：点名了却取不到的 `apiKeyEnv` 必须以 `MISSING_CREDENTIAL` 失败，而不是用环境里恰好持有的某个无关密钥完成认证。
+pi-ai 的 `Models` 自带按提供方 ID 索引的 `CredentialStore`，其 API-key auth 可以解析 `credential.key ?? env(VAR)`。API-key profile 不使用该存储，因为这会在 `ctx.credentials` 之外制造第二个 API-key 真源，并重新引入 harness 明确禁止的环境回落：点名了却取不到的 `apiKeyEnv` 必须以 `MISSING_CREDENTIAL` 失败，而不是用环境中恰好存在的无关密钥完成认证。注入 collection 的可选存储只属于提供方原生 OAuth；API-key 查找仍然是每请求一次的 harness 覆盖。
 
-`ModelsImpl.applyAuth` 会把 `options.apiKey` 当作该请求的密钥，但这条路必须经由一个声明了 api-key 方法的提供方：`resolveProviderAuth` 在覆盖存在时短路到该方法，否则依次落到凭据存储与环境发现；若提供方压根没有 api-key 方法，它返回空，请求随即以 `Provider is not configured` 失败。因此 harness 一如既往经自身 seam 解析路由密钥，并把结果作为请求的 `apiKey` 传入；该集合构造时不带任何凭据存储。
+`ModelsImpl.applyAuth` 会通过声明了 api-key 方法的提供方把 `options.apiKey` 当作该请求的密钥：覆盖存在时，`resolveProviderAuth` 会短路到该方法，否则才考虑 OAuth 存储与提供方原生环境发现。因此 harness 会通过自身 seam 解析路由点名的密钥，再把结果作为请求的 `apiKey` 传入；挂载或卸载 `piAiOAuth` 只改变 collection 的 OAuth 存储。
 
-路由的 auth 由此推出。catalog 路由保留已安装提供方自己的 `auth`，从而为不点名凭据的 profile 保住其提供方原生环境发现，且在 `api` 覆盖之下同样保留：提供方读哪个环境是提供方自身的属性，而非其模型所讲协议格式（wire format）的属性。例外是没有 api-key 方法的 catalog 提供方——`openai-codex` 只走 OAuth——此时点名了凭据的 profile 会在提供方原有 auth 之外再获得 harness 的方法，否则它配置的密钥会在任何请求发出之前被拒。这类路由上不点名凭据的 profile 什么也不加、并保留那句诚实的拒绝：本适配器没有可供解析的 OAuth 存储。手工声明的路由则获得一个 harness 自有的 `ApiKeyAuth`，它报告「已配置但无密钥」而非「未配置」，把该要求留给协议——那才是它真正所在的位置：pi-ai 的 OpenAI 兼容实现仍要求密钥或 `Authorization` 标头，并且会自己说出来。
+路由的 auth 由这项拆分推出。catalog 路由保留已安装提供方自己的 `auth`，为不点名凭据的 profile 保留提供方原生环境发现，也在 `api` 覆盖之下保留 OAuth。没有 api-key 方法的提供方（如 `openai-codex`）会在服务存在时使用已挂载的 OAuth 存储；不含该服务的组合无法认证 keyless profile，也不会在可配置目录中提供该路由。显式点名凭据的 profile 还会在提供方 OAuth 方法旁获得 harness api-key 方法。手工声明的路由则获得一个 harness 自有的 `ApiKeyAuth`，它报告「已配置但无密钥」而非「未配置」，把该要求留给协议——那才是它真正所在的位置：pi-ai 的 OpenAI 兼容实现仍要求密钥或 `Authorization` 标头，并且会自己说出来。
 
 ## Alternatives considered
 

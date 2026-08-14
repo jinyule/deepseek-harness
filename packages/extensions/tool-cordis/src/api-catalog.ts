@@ -945,6 +945,72 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'piAiOAuth',
+    summary: 'Durable OAuth service and the exact CredentialStore injected into pi-ai.',
+    description: 'Durable OAuth service and the exact CredentialStore injected into pi-ai.',
+    methods: [
+      {
+        signature: 'supports(provider: string): boolean',
+        description: 'Whether the installed pi-ai provider offers OAuth.',
+        parameters: [{ name: 'provider', description: 'pi-ai provider route id.' }],
+        returns: 'whether this service can authenticate the route through OAuth.',
+      },
+      {
+        signature: 'async read(providerId: string): Promise<PiAiCredential | undefined>',
+        description: 'Read a stored credential snapshot without refreshing it.',
+        parameters: [{ name: 'providerId', description: 'pi-ai provider route id.' }],
+        returns: 'a cloned credential, or `undefined` when none is stored.',
+      },
+      {
+        signature: 'async list(): Promise<readonly PiAiCredentialInfo[]>',
+        description: 'List non-secret metadata without resolving provider auth.',
+        parameters: [],
+        returns: 'stored provider ids and credential types.',
+      },
+      {
+        signature: 'modify( providerId: string, fn: (current: PiAiCredential | undefined) => Promise<PiAiCredential | undefined>, ): Promise<PiAiCredential | undefined>',
+        description: 'Serialize a provider mutation across processes. The callback remains under the lock because pi-ai performs refresh there to prevent token rotation races.',
+        parameters: [{ name: 'providerId', description: 'pi-ai provider route id.' }, { name: 'fn', description: 'provider-owned mutation, including any refresh exchange.' }],
+        returns: 'the replacement credential or the unchanged stored value.',
+      },
+      {
+        signature: 'delete(providerId: string): Promise<void>',
+        description: 'Delete one credential while serialized against refresh and login writes.',
+        parameters: [{ name: 'providerId', description: 'pi-ai provider route id.' }],
+      },
+      {
+        signature: '@Remote(\'describe\') async describe(): Promise<PiAiOAuthDescribeValue>',
+        description: 'Current OAuth provider and durable-login state.',
+        parameters: [],
+        returns: 'non-secret provider metadata and login status.',
+      },
+      {
+        signature: '@Remote(\'start\') start(request: PiAiOAuthStartRequest): PiAiOAuthCommandResult',
+        description: 'Start one provider-owned login and return before its interaction settles.',
+        parameters: [{ name: 'request', description: 'provider whose OAuth flow should start.' }],
+        returns: 'command acknowledgement or a stable state rejection.',
+      },
+      {
+        signature: '@Remote(\'answer\') answer(request: PiAiOAuthAnswerRequest): PiAiOAuthCommandResult',
+        description: 'Answer the exact outstanding prompt.',
+        parameters: [{ name: 'request', description: 'provider, opaque prompt id, and user answer.' }],
+        returns: 'command acknowledgement or a stable prompt-state rejection.',
+      },
+      {
+        signature: '@Remote(\'cancel\') cancel(request: PiAiOAuthProviderRequest): PiAiOAuthCommandResult',
+        description: 'Cancel one active provider login.',
+        parameters: [{ name: 'request', description: 'provider whose login should be cancelled.' }],
+        returns: 'command acknowledgement or a stable state rejection.',
+      },
+      {
+        signature: '@Remote(\'logout\') async logout(request: PiAiOAuthProviderRequest): Promise<PiAiOAuthCommandResult>',
+        description: 'Remove one stored OAuth credential through pi-ai\'s own logout path.',
+        parameters: [{ name: 'request', description: 'provider whose durable credential should be removed.' }],
+        returns: 'command acknowledgement or a stable provider-state rejection.',
+      },
+    ],
+  },
+  {
     key: 'planMode',
     summary: '`ctx.planMode`: owns logged plan state, applies and narrates selected state at step start, the `plan:policy` section, the `/plan` command, and the stable exit tool.',
     description: '`ctx.planMode`: owns logged plan state, applies and narrates selected state at step start, the `plan:policy` section, the `/plan` command, and the stable exit tool. UIs observe committed flips through `session/event`; there is no live mirror.',
@@ -2398,6 +2464,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'options', description: 'the full request. A LOOP-built request carries the process-local {@link markAgentLoopRequest} identity and arrives deep-frozen (mutation throws): its content is a pure function of the session log (the reconstructability Agent Note), so listeners read it, never rewrite it. Hand-built calls do not carry that marker; their messages already obey the immutable creation contract.' }],
   },
   {
+    name: 'pi-ai-oauth/login-event',
+    mode: 'emit',
+    signature: '\'pi-ai-oauth/login-event\'(provider: string, event: PiAiOAuthLoginEvent): void',
+    summary: 'Reports non-secret progress from one provider-owned login to local and Remote listeners.',
+    description: 'Reports non-secret progress from one provider-owned login to local and Remote listeners.',
+    parameters: [{ name: 'provider', description: 'pi-ai provider route id.' }, { name: 'event', description: 'non-secret login progress.' }],
+  },
+  {
+    name: 'pi-ai-oauth/updated',
+    mode: 'emit',
+    signature: '\'pi-ai-oauth/updated\'(provider: string): void',
+    summary: 'Invalidates status after one provider\'s durable credential or login lifecycle changes.',
+    description: 'Invalidates status after one provider\'s durable credential or login lifecycle changes.',
+    parameters: [{ name: 'provider', description: 'pi-ai provider whose durable or login state changed.' }],
+  },
+  {
     name: 'session-telemetry/record',
     mode: 'waterfall',
     signature: '\'session-telemetry/record\'(record: SessionTelemetryRecord, next: () => SessionTelemetryRecord): SessionTelemetryRecord',
@@ -3476,6 +3558,58 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PermissionSelect',
     declaration: 'export interface PermissionSelect {\n    options: PresetOption[];\n    currentValue: string;\n}',
+  },
+  {
+    name: 'PiAiOAuthAnswerRequest',
+    declaration: 'export interface PiAiOAuthAnswerRequest {\n    readonly provider: string;\n    readonly promptId: PiAiOAuthPromptId;\n    readonly value: string;\n}',
+  },
+  {
+    name: 'PiAiOAuthCommandFailure',
+    declaration: 'export interface PiAiOAuthCommandFailure {\n    readonly code: \'unknown-provider\' | \'login-active\' | \'login-absent\' | \'prompt-absent\' | \'prompt-mismatch\' | \'invalid-answer\';\n    readonly message: string;\n}',
+  },
+  {
+    name: 'PiAiOAuthCommandResult',
+    declaration: 'export type PiAiOAuthCommandResult = {\n    readonly ok: true;\n    readonly value: PiAiOAuthCommandValue;\n} | {\n    readonly ok: false;\n    readonly error: PiAiOAuthCommandFailure;\n};',
+  },
+  {
+    name: 'PiAiOAuthCommandValue',
+    declaration: 'export interface PiAiOAuthCommandValue {\n    readonly accepted: true;\n}',
+  },
+  {
+    name: 'PiAiOAuthDescribeValue',
+    declaration: 'export interface PiAiOAuthDescribeValue {\n    readonly providers: readonly PiAiOAuthProviderView[];\n}',
+  },
+  {
+    name: 'PiAiOAuthLinkView',
+    declaration: 'export interface PiAiOAuthLinkView {\n    readonly url: string;\n    readonly label?: string;\n}',
+  },
+  {
+    name: 'PiAiOAuthLoginEvent',
+    declaration: 'export type PiAiOAuthLoginEvent = {\n    readonly type: \'info\';\n    readonly message: string;\n    readonly links?: readonly PiAiOAuthLinkView[];\n} | {\n    readonly type: \'auth_url\';\n    readonly url: string;\n    readonly instructions?: string;\n} | {\n    readonly type: \'device_code\';\n    readonly userCode: string;\n    readonly verificationUri: string;\n    readonly intervalSeconds?: number;\n    readonly expiresInSeconds?: number;\n} | {\n    readonly type: \'progress\';\n    readonly message: string;\n} | {\n    readonly type: \'prompt\';\n    readonly prompt: PiAiOAuthPromptView;\n} | {\n    readonly type: \'success\';\n} | {\n    readonly type: \'failure\';\n    readonly message: string;\n} | {\n    readonly type: \'cancelled\';\n};',
+  },
+  {
+    name: 'PiAiOAuthPromptId',
+    declaration: 'export type PiAiOAuthPromptId = Branded<\'PiAiOAuthPromptId\'>;',
+  },
+  {
+    name: 'PiAiOAuthPromptOptionView',
+    declaration: 'export interface PiAiOAuthPromptOptionView {\n    readonly id: string;\n    readonly label: string;\n    readonly description?: string;\n}',
+  },
+  {
+    name: 'PiAiOAuthPromptView',
+    declaration: 'export type PiAiOAuthPromptView = {\n    readonly id: PiAiOAuthPromptId;\n    readonly message: string;\n    readonly placeholder?: string;\n} & ({\n    readonly type: \'select\';\n    readonly options: readonly PiAiOAuthPromptOptionView[];\n} | {\n    readonly type: \'text\' | \'secret\' | \'manual_code\';\n});',
+  },
+  {
+    name: 'PiAiOAuthProviderRequest',
+    declaration: 'export interface PiAiOAuthProviderRequest {\n    readonly provider: string;\n}',
+  },
+  {
+    name: 'PiAiOAuthProviderView',
+    declaration: 'export interface PiAiOAuthProviderView {\n    readonly provider: string;\n    readonly displayName: string;\n    readonly authName: string;\n    readonly loginLabel?: string;\n    readonly configured: boolean;\n    readonly oauthOnly: boolean;\n    readonly loginActive: boolean;\n}',
+  },
+  {
+    name: 'PiAiOAuthStartRequest',
+    declaration: 'export interface PiAiOAuthStartRequest {\n    readonly provider: string;\n}',
   },
   {
     name: 'PostToolDecision',

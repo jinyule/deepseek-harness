@@ -24,6 +24,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../llm-pi-ai-oauth"
+    },
+    {
       "path": "../../attachment/attachment"
     },
     {

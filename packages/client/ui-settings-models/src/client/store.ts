@@ -9,6 +9,8 @@
 import type {
   ConfigurableProviderView, CredentialView, IApiClient, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { PiAiOAuthDescribeValue, PiAiOAuthProviderView } from '@deepseek-ai/dsh-llm-pi-ai-oauth/types'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { getPath, hasPath, nodeAtPath, rehydrateSchema } from '@deepseek-ai/dsh-client-schema-form'
@@ -31,6 +33,8 @@ export interface ProviderRow {
   apiKeyEnv: string | undefined
   /** Credential state for {@link apiKeyEnv}, once described. */
   credential: CredentialView | undefined
+  /** Provider-native OAuth state when the installed pi-ai provider offers it. */
+  oauth?: PiAiOAuthProviderView
 }
 
 /** Page snapshot. */
@@ -40,6 +44,8 @@ export interface ModelsSettingsState {
   error: string | null
   /** Credential enrichment failure; provider/settings rows remain usable. */
   credentialError: string | null
+  /** OAuth enrichment failure; provider/settings rows remain usable. */
+  oauthError: string | null
   /** Whether the settings provider accepts writes. */
   writable: boolean
   /** Every configurable provider joined with its configured/credential state. */
@@ -100,6 +106,7 @@ export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
     status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
+    oauthError: null,
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
@@ -108,7 +115,10 @@ export class ModelsSettingsStore {
   /**
    * @param api - the wire face (settings/credentials/llm domains).
    */
-  constructor(private readonly api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>) {}
+  constructor(
+    private readonly api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>,
+    private readonly oauth?: { describe: () => Promise<RemoteResult<PiAiOAuthDescribeValue>> },
+  ) {}
 
   /**
    * Refresh the whole page snapshot: directory and namespaces in parallel,
@@ -157,6 +167,17 @@ export class ModelsSettingsStore {
         credential: undefined,
       }
     })
+    let oauthProviders = new Map<string, PiAiOAuthProviderView>()
+    let oauthError: string | null = null
+    if (this.oauth !== undefined) {
+      try {
+        const response = await this.oauth.describe()
+        if (response.ok) oauthProviders = new Map(response.value.providers.map(provider => [provider.provider, provider]))
+        else oauthError = response.error.message
+      } catch (error) {
+        oauthError = messageOf(error)
+      }
+    }
     const refs = [...new Set(rows.flatMap(row => row.apiKeyEnv === undefined ? [] : [row.apiKeyEnv]))]
     let credentials: Record<string, CredentialView> = {}
     let credentialError: string | null = null
@@ -177,13 +198,18 @@ export class ModelsSettingsStore {
       s.status = 'ready'
       s.error = null
       s.credentialError = credentialError
+      s.oauthError = oauthError
       s.writable = writable
-      s.rows = rows.map(row => ({
-        ...row,
-        ...row.apiKeyEnv !== undefined && credentials[row.apiKeyEnv] !== undefined
-          ? { credential: credentials[row.apiKeyEnv] }
-          : {},
-      }))
+      s.rows = rows.map((row) => {
+        const oauth = oauthProviders.get(row.entry.provider)
+        return {
+          ...row,
+          ...oauth === undefined ? {} : { oauth },
+          ...row.apiKeyEnv !== undefined && credentials[row.apiKeyEnv] !== undefined
+            ? { credential: credentials[row.apiKeyEnv] }
+            : {},
+        }
+      })
       s.namespaces = namespaces
     })
   }
@@ -201,6 +227,7 @@ export class ModelsSettingsStore {
  */
 export function providerUsable(row: ProviderRow): boolean {
   if (!row.entry.active) return false
+  if (row.oauth?.oauthOnly === true) return row.oauth.configured
   if (row.apiKeyEnv === undefined) return true
   return row.credential?.configured === true
 }

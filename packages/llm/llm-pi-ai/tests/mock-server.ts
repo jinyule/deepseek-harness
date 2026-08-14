@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
+import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from 'node:zlib'
 
 export interface MockServer {
   url: string
@@ -11,6 +12,20 @@ export interface MockServer {
 }
 
 const servers: Server[] = []
+
+/** Decode the request encodings used by pi-ai provider implementations. */
+function requestBody(request: IncomingMessage, chunks: readonly Buffer[]): string {
+  const body = Buffer.concat(chunks)
+  switch (request.headers['content-encoding']) {
+    case undefined:
+    case 'identity': return body.toString('utf8')
+    case 'gzip': return gunzipSync(body).toString('utf8')
+    case 'deflate': return inflateSync(body).toString('utf8')
+    case 'br': return brotliDecompressSync(body).toString('utf8')
+    case 'zstd': return zstdDecompressSync(body).toString('utf8')
+    default: throw new Error(`unsupported mock request content-encoding: ${request.headers['content-encoding']}`)
+  }
+}
 
 /** Close every server opened since the last call; run from each spec's afterEach. */
 export async function closeMockServers(): Promise<void> {
@@ -43,9 +58,10 @@ export async function mockServer(script: {
       closedResponses += 1
       responseClosed.resolve(undefined)
     })
-    let body = ''
-    request.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => { chunks.push(chunk) })
     request.on('end', () => {
+      const body = requestBody(request, chunks)
       paths.push(request.url ?? '')
       requests.push(body.length === 0 ? undefined : JSON.parse(body))
       headers.push(request.headers)
