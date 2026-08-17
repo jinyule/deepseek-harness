@@ -28,6 +28,8 @@ The rewrite touches only **delimited, complete package-name tokens**: quoted or 
 
 Two classes are invisible to a token rule and were renamed site by site. First, property access — `manifest.peerDependencies?.cordis` — where TypeScript cannot catch a stale `Record<string, string>` key. Second, constants that carry the name as data: the vendored set in `check-workspace-constraints.ts`, the group/include names in `verify-cordis-config.ts`, the `declare module` target strings in `cordis-walk.ts`, `gen-scoped-events.ts`, and typert's `analyzer.ts`, and `alwaysBundle` in `app-boot/tsdown.config.ts`.
 
+The same spelling also names runtime data rather than a package: host/client event names such as `cordis/request-run`, UI namespaces, model/tool keys, and generated catalog labels remain unchanged through explicit per-file generic skips.
+
 Markdown splits along what a reader does with it. Every fence follows the rename regardless of its info string, because a fence is code they copy or configuration they mount — the `yaml` fences naming Loader plugins and the `ts ignore-check` fences beside compiled ones included. Prose follows it under `docs/`, where a tutorial sentence quoting a name teaches something this repository no longer resolves. Prose elsewhere — `vendor/*/README.md`, package READMEs, and `.agents/notes/` — keeps the names it was written with, both because it records what was true then and because the same spelling can mean something else: the Python SDK's `cordis` option, the unvendored `@cordisjs/plugin-http`, or an agent-preset id.
 
 ## Consequences
@@ -38,7 +40,7 @@ Markdown splits along what a reader does with it. Every fence follows the rename
 - Upstream sync follows the procedure in `vendor/README.md` with one added obligation in step 3: re-apply the rename over the copied sources with `pnpm run rescope-vendor --apply`, whose mapping and the table's two name columns must agree.
 - **Returning to the official upstream packages** means applying that mapping in reverse — `pnpm run rescope-vendor --apply --reverse` — then restoring the two `minimumReleaseAgeExclude` entries and relaxing the publication-set assertion. It spans roughly 1300 files, so replay it with the script rather than by hand.
 
-`scripts/rescope-vendor.ts` owns the rename: the mapping, the delimited-token rule, the per-file exemptions where a name is a directory instead of a package, the exact edits above, and a `--check` mode asserting no residue, every exact edit landed, and idempotency, which the `hygiene` gate runs on every CI pass. A rebase replays it instead of resolving a 1300-file conflict, and an upstream change to one of the pinned sites fails the run loudly instead of being silently skipped.
+`scripts/rescope-vendor.ts` owns the rename: the mapping, the delimited-token rule, the per-file exemptions where a name is a runtime identifier or directory instead of a package, the exact edits above, and a `--check` mode asserting no residue, every exact edit landed, and idempotency, which the `hygiene` gate runs on every CI pass. A rebase replays it instead of resolving a 1300-file conflict, and an upstream change to one of the pinned sites fails the run loudly instead of being silently skipped.
 
 ## Alternatives considered
 
