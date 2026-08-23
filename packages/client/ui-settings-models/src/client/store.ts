@@ -1,6 +1,6 @@
 /**
  * Models settings page store: one snapshot joining the configurable-provider
- * directory (`llm.providers`), the settings namespaces (`settings.describe`),
+ * directory (`llm.providers`), the settings namespaces (shared settings mirror),
  * and the referenced credentials (`credentials.describe`). The host stays the
  * single fact source — every mutation writes through the wire and the page
  * re-renders from the next describe, pushed or refetched.
@@ -9,11 +9,10 @@
 import type {
   ConfigurableProviderView, CredentialView, IApiClient, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { PiAiOAuthDescribeValue, PiAiOAuthProviderView } from '@deepseek-ai/dsh-llm-pi-ai-oauth/types'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
-import { getPath, hasPath, nodeAtPath, rehydrateSchema } from '@deepseek-ai/dsh-client-schema-form'
+import type { SettingsDescribeFace } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { SettingsSchemaOperations } from './schema-operations.ts'
 
 /**
  * Any route key walks a dict schema to the same profile node, so the lookup
@@ -33,8 +32,6 @@ export interface ProviderRow {
   apiKeyEnv: string | undefined
   /** Credential state for {@link apiKeyEnv}, once described. */
   credential: CredentialView | undefined
-  /** Provider-native OAuth state when the installed pi-ai provider offers it. */
-  oauth?: PiAiOAuthProviderView
 }
 
 /** Page snapshot. */
@@ -44,8 +41,6 @@ export interface ModelsSettingsState {
   error: string | null
   /** Credential enrichment failure; provider/settings rows remain usable. */
   credentialError: string | null
-  /** OAuth enrichment failure; provider/settings rows remain usable. */
-  oauthError: string | null
   /** Whether the settings provider accepts writes. */
   writable: boolean
   /** Every configurable provider joined with its configured/credential state. */
@@ -82,20 +77,28 @@ export function deriveKeyRef(provider: string): string {
  * the choices the page offers cannot drift from the ones the adapter accepts:
  * both come from the same `Config`.
  * @param namespace - the namespace view whose schema declares the profile shape.
+ * @param schema - settings schema operations.
  * @returns the protocol identifiers, or an empty list when the schema has none.
  */
-export function protocolChoices(namespace: SettingsNamespaceView | undefined): string[] {
+export function protocolChoices(
+  namespace: SettingsNamespaceView | undefined,
+  schema: SettingsSchemaOperations,
+): string[] {
   if (namespace === undefined) return []
-  const node = nodeAtPath(rehydrateSchema(namespace.schema), ['providers', PROBE_ROUTE, 'api'])
+  const node = schema.nodeAtPath(schema.rehydrate(namespace.schema), ['providers', PROBE_ROUTE, 'api'])
   const list = (node as { type?: string; list?: readonly { value?: unknown }[] } | undefined)
   if (list?.type !== 'union' || list.list === undefined) return []
   return list.list.map(entry => entry.value).filter((value): value is string => typeof value === 'string')
 }
 
 /** The credential reference a resolved profile names (its `apiKeyEnv` field). */
-function apiKeyEnvOf(namespace: SettingsNamespaceView | undefined, path: readonly string[]): string | undefined {
+function apiKeyEnvOf(
+  namespace: SettingsNamespaceView | undefined,
+  path: readonly string[],
+  schema: SettingsSchemaOperations,
+): string | undefined {
   if (namespace === undefined) return undefined
-  const profile = getPath(namespace.value, path)
+  const profile = schema.getPath(namespace.value, path)
   if (typeof profile !== 'object' || profile === null) return undefined
   const ref = (profile as { apiKeyEnv?: unknown }).apiKeyEnv
   return typeof ref === 'string' && ref.length > 0 ? ref : undefined
@@ -106,24 +109,27 @@ export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
     status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
-    oauthError: null,
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
   private generation = 0
 
   /**
-   * @param api - the wire face (settings/credentials/llm domains).
+   * @param api - the wire face (credentials/llm domains, and settings writes).
+   * @param describeFace - the shared mirror's describe face (namespace views and writability).
    */
   constructor(
     private readonly api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>,
-    private readonly oauth?: { describe: () => Promise<RemoteResult<PiAiOAuthDescribeValue>> },
+    private readonly schema: SettingsSchemaOperations,
+    private readonly describeFace: SettingsDescribeFace,
   ) {}
 
   /**
-   * Refresh the whole page snapshot: directory and namespaces in parallel,
-   * then one batched credential describe over every referenced ref. A
-   * failure keeps the last good rows and surfaces the error.
+   * Refresh the whole page snapshot: the provider directory and the mirror's
+   * settings answer in parallel, then one batched credential describe over
+   * every referenced ref. Provider failure or absence of an initial settings
+   * answer keeps the last good rows and surfaces an error; a failed settings
+   * refresh reuses the mirror's held view.
    * @returns nothing; the snapshot carries the outcome.
    */
   async load(): Promise<void> {
@@ -131,17 +137,20 @@ export class ModelsSettingsStore {
     this.store.update((s) => { s.status = 'loading'; s.error = null })
     let providers: ConfigurableProviderView[]
     let writable: boolean
-    let views: SettingsNamespaceView[]
+    let views: readonly SettingsNamespaceView[]
     try {
-      const [providersResponse, settingsResponse] = await Promise.all([
+      const [providersResponse] = await Promise.all([
         this.api.llm.providers({}),
-        this.api.settings.describe({}),
+        this.describeFace.ensure(),
       ])
       if (!providersResponse.result.ok) throw new Error(providersResponse.result.error.message)
-      if (!settingsResponse.result.ok) throw new Error(settingsResponse.result.error.message)
+      const mirrored = this.describeFace.getSnapshot()
+      if (mirrored.view === undefined) {
+        throw new Error(mirrored.error ?? 'settings are unavailable in this browser')
+      }
       providers = providersResponse.result.value.providers
-      writable = settingsResponse.result.value.writable
-      views = settingsResponse.result.value.namespaces
+      writable = mirrored.view.writable
+      views = mirrored.view.namespaces
     } catch (error) {
       if (generation !== this.generation) return
       this.store.update((s) => {
@@ -154,30 +163,19 @@ export class ModelsSettingsStore {
     const rows: ProviderRow[] = providers.map((entry) => {
       const namespace = namespaces.get(entry.settingsNs)
       const configured = namespace !== undefined
-        && (entry.settingsPath.length === 0 || getPath(namespace.value, entry.settingsPath) !== undefined)
+        && (entry.settingsPath.length === 0 || this.schema.getPath(namespace.value, entry.settingsPath) !== undefined)
       const removable = namespace !== undefined
         && entry.settingsPath.length > 0
-        && hasPath(namespace.user, entry.settingsPath)
-        && !hasPath(namespace.base, entry.settingsPath)
+        && this.schema.hasPath(namespace.user, entry.settingsPath)
+        && !this.schema.hasPath(namespace.base, entry.settingsPath)
       return {
         entry,
         configured,
         removable,
-        apiKeyEnv: apiKeyEnvOf(namespace, entry.settingsPath),
+        apiKeyEnv: apiKeyEnvOf(namespace, entry.settingsPath, this.schema),
         credential: undefined,
       }
     })
-    let oauthProviders = new Map<string, PiAiOAuthProviderView>()
-    let oauthError: string | null = null
-    if (this.oauth !== undefined) {
-      try {
-        const response = await this.oauth.describe()
-        if (response.ok) oauthProviders = new Map(response.value.providers.map(provider => [provider.provider, provider]))
-        else oauthError = response.error.message
-      } catch (error) {
-        oauthError = messageOf(error)
-      }
-    }
     const refs = [...new Set(rows.flatMap(row => row.apiKeyEnv === undefined ? [] : [row.apiKeyEnv]))]
     let credentials: Record<string, CredentialView> = {}
     let credentialError: string | null = null
@@ -198,18 +196,13 @@ export class ModelsSettingsStore {
       s.status = 'ready'
       s.error = null
       s.credentialError = credentialError
-      s.oauthError = oauthError
       s.writable = writable
-      s.rows = rows.map((row) => {
-        const oauth = oauthProviders.get(row.entry.provider)
-        return {
-          ...row,
-          ...oauth === undefined ? {} : { oauth },
-          ...row.apiKeyEnv !== undefined && credentials[row.apiKeyEnv] !== undefined
-            ? { credential: credentials[row.apiKeyEnv] }
-            : {},
-        }
-      })
+      s.rows = rows.map(row => ({
+        ...row,
+        ...row.apiKeyEnv !== undefined && credentials[row.apiKeyEnv] !== undefined
+          ? { credential: credentials[row.apiKeyEnv] }
+          : {},
+      }))
       s.namespaces = namespaces
     })
   }
@@ -227,7 +220,6 @@ export class ModelsSettingsStore {
  */
 export function providerUsable(row: ProviderRow): boolean {
   if (!row.entry.active) return false
-  if (row.oauth?.oauthOnly === true) return row.oauth.configured
   if (row.apiKeyEnv === undefined) return true
   return row.credential?.configured === true
 }

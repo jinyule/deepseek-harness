@@ -7,7 +7,7 @@
 // provider status. The customized-settings fold writes its curated fields —
 // the endpoint, and a declared route's own name and protocol — as merge
 // patches against the stored profile. Zero model calls: configuration is pure
-// settings/credentials/llm/OAuth-domain traffic, so there is no fixture and a
+// settings/credentials/llm-domain traffic, so there is no fixture and a
 // stray stream would fail loud because the adapter registry is empty. The provider under test is
 // minimax-cn so a developer's real ANTHROPIC/OPENAI environment keys can
 // never shadow the derived reference. The deletion dialog distinguishes a
@@ -27,10 +27,10 @@ import { ZH_BROWSER_LOCALE, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/models-settings', import.meta.url))
 const EMPTY_EXPECTED = join(SNAPSHOT_DIR, 'empty.expected.md')
-const OAUTH_EXPECTED = join(SNAPSHOT_DIR, 'oauth.expected.md')
 const CONFIGURED_EXPECTED = join(SNAPSHOT_DIR, 'configured.expected.md')
 const DECLARED_EXPECTED = join(SNAPSHOT_DIR, 'declared.expected.md')
 const DECLARED_EDIT_EXPECTED = join(SNAPSHOT_DIR, 'declared-edit.expected.md')
+const MODEL_PICKER_EXPECTED = join(SNAPSHOT_DIR, 'model-picker.expected.md')
 const NATIVE_DELETE_EXPECTED = join(SNAPSHOT_DIR, 'native-delete.expected.md')
 const DELETE_EXPECTED = join(SNAPSHOT_DIR, 'delete.expected.md')
 const MODE = webSnapshotMode()
@@ -48,13 +48,7 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     tripwire = watchConsole(page)
     await page.goto(scaffold.baseUrl, { waitUntil: 'load' })
-    try {
-      await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'page readiness failed'
-      const body = (await page.locator('body').innerText()).slice(0, 2_000)
-      throw new Error(`${message}\npage errors: ${JSON.stringify(tripwire.pageErrors)}\nbody: ${body}`)
-    }
+    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
   }, 120_000)
 
   afterAll(async () => {
@@ -82,32 +76,10 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     const options = await pick.locator('option').allTextContents()
     expect(options).toContain('anthropic')
     expect(options).toContain('minimax-cn')
-    expect(options).toContain('openai-codex')
     await pick.selectOption('minimax-cn')
     await dialog.getByRole('textbox', { name: 'API 密钥', exact: true }).waitFor({ timeout: 10_000 })
     const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(EMPTY_EXPECTED, snapshot, MODE)
-  }, 60_000)
-
-  it('renders an OAuth-only provider as a subscription login instead of an API-key form', async () => {
-    onTestFailed(() => saveFailureShot(page, 'web-e2e-models-oauth'))
-    const dialog = page.getByRole('dialog', { name: '设置' })
-    const pick = dialog.getByLabel('提供方')
-    await pick.selectOption('openai-codex')
-    await dialog.getByText('OpenAI (ChatGPT Plus/Pro)', { exact: true }).waitFor({ timeout: 10_000 })
-    await dialog.getByText('请连接订阅账号后使用此提供方。', { exact: true }).waitFor({ timeout: 10_000 })
-    await dialog.getByRole('button', { name: '登录', exact: true }).waitFor({ timeout: 10_000 })
-    expect(await dialog.getByRole('textbox', { name: 'API 密钥', exact: true }).count()).toBe(0)
-    await expect.poll(
-      async () => dialog.getByRole('button', { name: '保存', exact: true }).isEnabled(),
-      { timeout: 10_000 },
-    ).toBe(false)
-    const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
-    await compareOrRefreshGolden(OAUTH_EXPECTED, snapshot, MODE)
-
-    // Restore the API-key provider selected by the rest of this serial scenario.
-    await pick.selectOption('minimax-cn')
-    await dialog.getByRole('textbox', { name: 'API 密钥', exact: true }).waitFor({ timeout: 10_000 })
   }, 60_000)
 
   it('refuses a key no HTTP header can carry before anything is written', async () => {
@@ -205,6 +177,42 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(CONFIGURED_EXPECTED, snapshot, MODE)
     expect(tripwire.pageErrors).toEqual([])
+  }, 60_000)
+
+  it('selects and clears the discovered model catalog in one action', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-models-picker'))
+    const settingsDialog = page.getByRole('dialog', { name: '设置' })
+    await settingsDialog.getByRole('button', { name: '编辑 minimax-cn' }).click()
+    await settingsDialog.getByText('自定义设置').click()
+    await settingsDialog.getByRole('button', { name: '获取可用模型' }).click()
+
+    const picker = page.getByRole('dialog', { name: '选择要添加的模型' })
+    await picker.waitFor({ timeout: 10_000 })
+    const boxes = picker.getByRole('checkbox')
+    const count = await boxes.count()
+    expect(count).toBeGreaterThan(0)
+    expect(await boxes.evaluateAll(nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual(
+      Array.from({ length: count }, () => true),
+    )
+
+    await picker.getByRole('button', { name: '取消全选' }).click()
+    expect(await boxes.evaluateAll(nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual(
+      Array.from({ length: count }, () => false),
+    )
+    await picker.getByRole('button', { name: '全选' }).waitFor()
+    const snapshot = await captureStableAria(
+      page,
+      '[role="dialog"][aria-label="选择要添加的模型"]',
+      scaffold.workspaceCwd,
+    )
+    await compareOrRefreshGolden(MODEL_PICKER_EXPECTED, snapshot, MODE)
+
+    await picker.getByRole('button', { name: '全选' }).click()
+    expect(await boxes.evaluateAll(nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual(
+      Array.from({ length: count }, () => true),
+    )
+    await picker.getByRole('button', { name: '取消', exact: true }).click()
+    await settingsDialog.getByRole('button', { name: '取消', exact: true }).click()
   }, 60_000)
 
   it('declares a route the adapter does not ship', async () => {
@@ -309,7 +317,8 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, [
       'configured.expected.md', 'declared-edit.expected.md', 'declared.expected.md',
-      'delete.expected.md', 'empty.expected.md', 'native-delete.expected.md', 'oauth.expected.md',
+      'delete.expected.md', 'empty.expected.md', 'model-picker.expected.md',
+      'native-delete.expected.md',
     ])
   })
 })

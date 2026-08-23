@@ -240,7 +240,7 @@ Every adapter MUST obey these, and every consumer may rely on them:
 
 ## `ResolvedRetryPolicy`
 
-Provider configuration resolves before route registration into an immutable discriminated union. Normal mode carries `mode: 'normal'`, finite `maxRetries`, `retryableCodes`, and required `initialDelayMs`, `maxDelayMs`, and `jitterRatio`; always mode carries `mode: 'always'` and the same required backoff fields without a finite maximum. `LlmRuntime.providerRetryPolicy(provider)` returns the currently registered value and supplies normal defaults when the adapter omits one; `llmRetryPolicyOf(stream)` returns the value captured from the serving registration after the call selects that registration, so later route disposal or replacement cannot change an in-flight failure's recovery policy. The [generated config catalog](../config-catalog.md) lists the optional input fields.
+Retry configuration resolves before route registration into an immutable discriminated union. Normal mode carries `mode: 'normal'`, finite `maxRetries`, `retryableCodes`, and required `initialDelayMs`, `maxDelayMs`, and `jitterRatio`; always mode carries `mode: 'always'` and the same required backoff fields without a finite maximum. Omitting a provider policy uses the normal default of five retries. Layered settings may retain normal-only `maxRetries` or `retryableCodes` after switching to always mode; the resolver ignores those inactive fields and captures the pure always policy. `LlmRuntime.providerRetryPolicy(provider)` returns the registered value, and `llmRetryPolicyOf(stream)` returns the value captured from the serving registration after the call selects it, so later route disposal or replacement cannot change an in-flight failure's recovery policy. The [generated config catalog](../config-catalog.md) lists the optional input fields.
 
 ## `AppIdentity` — app attribution
 
@@ -298,7 +298,8 @@ One keep/drop decision covers content and metadata together: a `max-tokens` fini
  * {@link ContentBlock}s and a final assistant {@link Message}.
  *
  * The agent loop feeds it while logging raw chunks for replay fidelity, then
- * reads `blocks()` / `message()` / `usage` / `finish` once the stream ends.
+ * reads `blocks()` / `message()` / `usage` / `finish` once the stream ends,
+ * or `interruptedBlocks()` when cancellation cut the stream short.
  *
  * Tolerant of delta-only protocols (no block-start/end); deltas arriving for
  * an index already closed by `block-end` are ignored (malformed stream) so a
@@ -317,6 +318,14 @@ declare class BlockAssembler {
    *   its accumulated deltas (an unknown block type never closed by `block-end` throws).
    */
   blocks(): ContentBlock[];
+  /**
+   * Assemble the prefix an interrupted stream can safely finalize: closed and
+   * open text/reasoning blocks with non-whitespace content, in stream order.
+   * Tool calls are omitted because interruption precedes dispatch; retaining
+   * one would require a fabricated result. Open unknown blocks are also omitted.
+   * @returns the kept blocks; empty when nothing streamed before the interruption.
+   */
+  interruptedBlocks(): ContentBlock[];
   /** Usage from the `usage` chunk; undefined until one arrives. */
   get usage(): TokenUsage | undefined;
   /** Finish reason from the `finish` chunk; `{kind: 'stop'}` when the stream ended without one. */
@@ -666,6 +675,8 @@ interface PreparedLlmCall {
   readonly retryPolicy: ResolvedRetryPolicy
   /** Detached context metadata resolved with the registration-bound call. */
   readonly context?: LlmModelContext
+  /** Exact model modalities captured with the adapter dispatch generation. */
+  readonly inputModalities?: readonly ModelModality[]
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
   /**
@@ -722,6 +733,16 @@ declare abstract class LlmAdapter {
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo>;
   /**
+   * Bind exact model metadata and the eventual request dispatch to one adapter generation.
+   * Dynamic adapters override this so settings changes between preparation and
+   * dispatch cannot combine one generation's capabilities with another's endpoint.
+   * @param provider - registered provider route.
+   * @param model - exact model id.
+   * @param signal - cancellation for model resolution.
+   * @returns model metadata and a one-generation stream entry point.
+   */
+  async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall>;
+  /**
    * Stream one model call as raw chunks. The only required method.
    * @param options - the fully-assembled request; implementations must honor `options.signal`.
    * @returns the chunk stream, obeying the adapter contract documented on `StreamChunk`.
@@ -738,7 +759,7 @@ declare abstract class LlmAdapter {
 
 ## Cordis API
 
-Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — this section is byte-identical in both language sides of the page. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
 <a id="ctxllm--llmruntime"></a>
 
@@ -864,86 +885,7 @@ async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<Prepared
 stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 ```
 
-Source: [`packages/llm/llm/src/index.ts:284`](../../packages/llm/llm/src/index.ts)
-
-<a id="ctxpiaioauth--piaioauthservice"></a>
-
-### `ctx.piAiOAuth` — `PiAiOAuthService`
-
-Durable OAuth service and the exact CredentialStore injected into pi-ai.
-
-```ts cordis-catalog
-/**
- * Whether the installed pi-ai provider offers OAuth.
- * @param provider - pi-ai provider route id.
- * @returns whether this service can authenticate the route through OAuth.
- */
-supports(provider: string): boolean
-
-/**
- * Read a stored credential snapshot without refreshing it.
- * @param providerId - pi-ai provider route id.
- * @returns a cloned credential, or `undefined` when none is stored.
- */
-async read(providerId: string): Promise<PiAiCredential | undefined>
-
-/**
- * List non-secret metadata without resolving provider auth.
- * @returns stored provider ids and credential types.
- */
-async list(): Promise<readonly PiAiCredentialInfo[]>
-
-/**
- * Serialize a provider mutation across processes. The callback remains under
- * the lock because pi-ai performs refresh there to prevent token rotation races.
- * @param providerId - pi-ai provider route id.
- * @param fn - provider-owned mutation, including any refresh exchange.
- * @returns the replacement credential or the unchanged stored value.
- */
-modify( providerId: string, fn: (current: PiAiCredential | undefined) => Promise<PiAiCredential | undefined>, ): Promise<PiAiCredential | undefined>
-
-/**
- * Delete one credential while serialized against refresh and login writes.
- * @param providerId - pi-ai provider route id.
- */
-delete(providerId: string): Promise<void>
-
-/**
- * Current OAuth provider and durable-login state.
- * @returns non-secret provider metadata and login status.
- */
-@Remote('describe') async describe(): Promise<PiAiOAuthDescribeValue>
-
-/**
- * Start one provider-owned login and return before its interaction settles.
- * @param request - provider whose OAuth flow should start.
- * @returns command acknowledgement or a stable state rejection.
- */
-@Remote('start') start(request: PiAiOAuthStartRequest): PiAiOAuthCommandResult
-
-/**
- * Answer the exact outstanding prompt.
- * @param request - provider, opaque prompt id, and user answer.
- * @returns command acknowledgement or a stable prompt-state rejection.
- */
-@Remote('answer') answer(request: PiAiOAuthAnswerRequest): PiAiOAuthCommandResult
-
-/**
- * Cancel one active provider login.
- * @param request - provider whose login should be cancelled.
- * @returns command acknowledgement or a stable state rejection.
- */
-@Remote('cancel') cancel(request: PiAiOAuthProviderRequest): PiAiOAuthCommandResult
-
-/**
- * Remove one stored OAuth credential through pi-ai's own logout path.
- * @param request - provider whose durable credential should be removed.
- * @returns command acknowledgement or a stable provider-state rejection.
- */
-@Remote('logout') async logout(request: PiAiOAuthProviderRequest): Promise<PiAiOAuthCommandResult>
-```
-
-Source: [`packages/llm/llm-pi-ai-oauth/src/index.ts:248`](../../packages/llm/llm-pi-ai-oauth/src/index.ts)
+Source: [`packages/llm/llm/src/index.ts`](../../packages/llm/llm/src/index.ts)
 
 <a id="llm-events"></a>
 
@@ -968,7 +910,7 @@ The provider topology changed: an adapter registered or unregistered routes, or 
 'llm/adapters-updated'(): void
 ```
 
-Source: [`packages/llm/llm/src/types.ts:23`](../../packages/llm/llm/src/types.ts)
+Source: [`packages/llm/llm/src/types.ts`](../../packages/llm/llm/src/types.ts)
 
 <a id="llmstream--waterfall"></a>
 
@@ -992,44 +934,5 @@ Waterfall around every streaming model call (retry, replay, routing). Bound to t
 'llm/stream'(this: LlmRuntime, options: GenerateOptions, next: () => AsyncIterable<StreamChunk>): AsyncIterable<StreamChunk>
 ```
 
-Source: [`packages/llm/llm/src/index.ts:64`](../../packages/llm/llm/src/index.ts)
-
-<a id="pi-ai-oauth-events"></a>
-
-### `pi-ai-oauth/*` events
-
-<a id="pi-ai-oauthlogin-event--emit"></a>
-
-#### `pi-ai-oauth/login-event` — emit
-
-Reports non-secret progress from one provider-owned login to local and Remote listeners.
-
-```ts cordis-catalog
-/**
- * Reports non-secret progress from one provider-owned login to local and Remote listeners.
- * @mode emit
- * @param provider - pi-ai provider route id.
- * @param event - non-secret login progress.
- */
-'pi-ai-oauth/login-event'(provider: string, event: PiAiOAuthLoginEvent): void
-```
-
-Source: [`packages/llm/llm-pi-ai-oauth/src/types.ts:119`](../../packages/llm/llm-pi-ai-oauth/src/types.ts)
-
-<a id="pi-ai-oauthupdated--emit"></a>
-
-#### `pi-ai-oauth/updated` — emit
-
-Invalidates status after one provider's durable credential or login lifecycle changes.
-
-```ts cordis-catalog
-/**
- * Invalidates status after one provider's durable credential or login lifecycle changes.
- * @mode emit
- * @param provider - pi-ai provider whose durable or login state changed.
- */
-'pi-ai-oauth/updated'(provider: string): void
-```
-
-Source: [`packages/llm/llm-pi-ai-oauth/src/types.ts:125`](../../packages/llm/llm-pi-ai-oauth/src/types.ts)
+Source: [`packages/llm/llm/src/index.ts`](../../packages/llm/llm/src/index.ts)
 <!-- END GENERATED cordis-surface -->

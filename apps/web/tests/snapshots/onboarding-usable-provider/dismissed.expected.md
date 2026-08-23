@@ -7,6 +7,9 @@
     - button "模型":
       - img
       - text: 模型
+    - button "账号":
+      - img
+      - text: 账号
     - button "插件":
       - img
       - text: 插件
@@ -48,6 +51,7 @@
     - option "moonshotai-cn"
     - option "nvidia"
     - option "openai"
+    - option "openai-codex"
     - option "opencode"
     - option "opencode-go"
     - option "openrouter"

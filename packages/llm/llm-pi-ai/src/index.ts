@@ -60,12 +60,13 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import type { PiAiOAuthService } from '@deepseek-ai/dsh-llm-pi-ai-oauth'
 import { PiAiAdapter } from './adapter.ts'
-import { catalogProviderIds, catalogProviderTakesApiKey } from './catalog.ts'
+import { authContextFrom, credentialStoreFrom } from './auth.ts'
+import { catalogProviderIds } from './catalog.ts'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
+import { registerPiAiFlows } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
 export type { PiAiAdapterOptions } from './adapter.ts'
@@ -80,6 +81,7 @@ export type {
   PiAiThinkingFormat,
   ResolvedPiAiProviderProfile,
 } from './config.ts'
+export { recordKeyFor } from './auth.ts'
 export { supportedProtocols } from './provider.ts'
 
 export const name = 'llm-pi-ai'
@@ -106,22 +108,15 @@ function registrationFacts(profiles: ReadonlyMap<string, ResolvedPiAiProviderPro
 }
 
 /**
- * The configurable-provider directory: every installed catalog route this
- * adapter can authenticate, plus every route the current profiles declare. A
- * hand-declared route has no catalog entry, so without this union it would
- * have no settings address and configuration surfaces could neither show nor
- * edit it.
- *
- * The profile half is unconditional, which is what keeps a route already
- * stored against a provider unavailable in the current composition editable and deletable rather than
- * stranded in the settings document with nothing on the page to remove it.
+ * The configurable-provider directory: every installed catalog route, plus
+ * every route the current profiles declare. A hand-declared route has no
+ * catalog entry, so without this union it would have no settings address and
+ * configuration surfaces could neither show nor edit it.
  * @param profiles - the currently resolved provider profiles.
- * @param supportsOAuth - whether the optional provider-native OAuth service can serve a route.
  * @returns the directory entries in catalog order, declared routes last.
  */
 function directoryEntries(
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>,
-  supportsOAuth: (provider: string) => boolean,
 ): LlmConfigurableProvider[] {
   const catalog = new Set(catalogProviderIds())
   const entries = new Map<string, LlmConfigurableProvider>()
@@ -137,16 +132,13 @@ function directoryEntries(
       declared: !catalog.has(provider),
     })
   }
-  for (const provider of catalog) {
-    if (catalogProviderTakesApiKey(provider) || supportsOAuth(provider)) declare(provider, provider)
-  }
+  for (const provider of catalog) declare(provider, provider)
   for (const [provider, profile] of profiles) declare(provider, profile.displayName)
   return [...entries.values()]
 }
 
 /** Register one generic pi-ai adapter for all configured provider routes. */
 export function apply(ctx: Context, config: Config): void {
-  let oauth: PiAiOAuthService | undefined
   let current: () => Config = () => config
   let lastRaw: Config | undefined
   let memoized: ReadonlyMap<string, ResolvedPiAiProviderProfile> | undefined
@@ -196,10 +188,14 @@ export function apply(ctx: Context, config: Config): void {
     )
   }
 
+  // One store and one ambient context for the whole plugin instance: both read
+  // through `ctx` per call, so they stay correct across the collection rebuilds
+  // a configuration change causes, and a sign-in survives one.
+  const auth = { credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) }
   const adapter = new PiAiAdapter({
     profiles,
     resolveApiKey,
-    resolveCredentialStore: () => oauth,
+    auth,
     resolveAttachments: () => ctx.get('attachments'),
     onReplayDegrade: ({ provider, model, reason }) => {
       ctx.logger.warn(
@@ -208,6 +204,12 @@ export function apply(ctx: Context, config: Config): void {
       )
     },
   })
+  // Independent of the route set: signing in is what makes a route worth
+  // adding, so the flows are offered before any profile names their provider.
+  // Scoped to the authorization seam rather than injected outright, because a
+  // composition without it (headless, ACP) simply has no surface to sign in
+  // from, while everything else this plugin does still works.
+  ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth) })
   // The full installed catalog is configurable from the moment the plugin
   // mounts — dormant or not — so configuration surfaces can offer every
   // pi-ai provider before any route exists. Hand-declared routes join it as
@@ -215,7 +217,7 @@ export function apply(ctx: Context, config: Config): void {
   let directory: DirectoryRegistrationHandle | undefined
   let directoryFacts: unknown
   const ensureDirectory = (): void => {
-    const entries = directoryEntries(profiles(), provider => oauth?.supports(provider) === true)
+    const entries = directoryEntries(profiles())
     if (deepEqualJson(entries, directoryFacts)) return
     // Atomic replace, never dispose-then-register: a route another adapter
     // family already declares (a profile keyed `deepseek-official`) would
@@ -230,17 +232,6 @@ export function apply(ctx: Context, config: Config): void {
     directoryFacts = entries
   }
   ensureDirectory()
-  // The OAuth store is optional for API-key-only compositions. Rebuild the
-  // directory as it appears or leaves so OAuth-only catalog routes are offered
-  // exactly while provider-native authentication can serve them.
-  ctx.inject(['piAiOAuth'], (oauthCtx) => {
-    oauth = oauthCtx.piAiOAuth
-    ensureDirectory()
-    return () => {
-      oauth = undefined
-      ensureDirectory()
-    }
-  })
   /**
    * The credential a named route already resolves, for an interrogation whose
    * draft carries none. A route being declared for the first time names no

@@ -24,13 +24,13 @@
       "path": "../../llm/llm"
     },
     {
-      "path": "../llm-pi-ai-oauth"
-    },
-    {
       "path": "../../attachment/attachment"
     },
     {
       "path": "../../credentials/credentials"
+    },
+    {
+      "path": "../../credentials/authorization"
     },
     {
       "path": "../../settings/settings"

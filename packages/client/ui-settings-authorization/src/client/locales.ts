@@ -1,0 +1,58 @@
+/** Copy dictionaries for provider account authorization. */
+
+/** English strings (the key-set source of truth for this pair). */
+export const en = {
+  nav: 'Accounts',
+  title: 'Provider accounts',
+  intro: 'Sign in through the methods supplied by installed model-provider plugins.',
+  loading: 'Loading provider accounts…',
+  empty: 'No installed plugin currently offers an interactive sign-in flow.',
+  retry: 'Retry',
+  configured: 'Signed in locally',
+  missing: 'Not signed in',
+  busyElsewhere: 'A sign-in attempt is already running on another surface.',
+  signIn: 'Sign in',
+  cancel: 'Cancel',
+  cancelling: 'Cancelling…',
+  forget: 'Forget local credential',
+  forgetting: 'Forgetting…',
+  forgetHint: 'This removes the local credential only; it does not revoke access at the provider.',
+  authorized: 'Signed in successfully.',
+  cancelled: 'Sign-in was cancelled.',
+  failed: 'Sign-in failed.',
+  continue: 'Continue',
+  openLink: 'Open sign-in page',
+  code: 'Code',
+  unsafeLink: 'The provider supplied a link with an unsupported scheme, so it was not opened.',
+  selectPlaceholder: 'Choose an option',
+}
+
+/** Authorization dictionary key union. */
+export type AuthorizationKey = keyof typeof en
+
+/** Simplified Chinese strings. */
+export const zh: { [Key in keyof typeof en]: string } = {
+  nav: '账号',
+  title: '提供方账号',
+  intro: '通过已安装模型提供方插件所提供的方式登录。',
+  loading: '正在加载提供方账号…',
+  empty: '当前没有已安装插件提供交互式登录流程。',
+  retry: '重试',
+  configured: '已在本地登录',
+  missing: '尚未登录',
+  busyElsewhere: '另一个界面正在进行登录。',
+  signIn: '登录',
+  cancel: '取消',
+  cancelling: '正在取消…',
+  forget: '忘记本地凭据',
+  forgetting: '正在移除…',
+  forgetHint: '这里只会移除本地凭据，不会撤销提供方侧的访问授权。',
+  authorized: '登录成功。',
+  cancelled: '登录已取消。',
+  failed: '登录失败。',
+  continue: '继续',
+  openLink: '打开登录页面',
+  code: '代码',
+  unsafeLink: '提供方返回了不支持的链接协议，因此未打开该链接。',
+  selectPlaceholder: '请选择',
+}

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-13-oauth-only-providers-withheld.md
-2026-08-13-oauth-only-providers-withheld.md: 5f4b0d170595000cde0d8cf64af80b4bacd3558b
-2026-08-13-oauth-only-providers-withheld.zh.md: 1367ce8ff72939d2561dcfb974adb5c6cbcce301
+2026-08-13-oauth-only-providers-withheld.md: 138cae6f56c0d8355d8db3bddd27aede7caf5b09
+2026-08-13-oauth-only-providers-withheld.zh.md: c572661fa1332320cdd2e105ec94ea479d64a8c3

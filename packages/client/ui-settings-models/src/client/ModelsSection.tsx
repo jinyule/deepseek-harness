@@ -16,13 +16,12 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import { Button, IconPlusOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-web-react'
+import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, messageOf, protocolChoices, providerUsable } from './store.ts'
-import type { ModelsSettingsState, ModelsSettingsStore, ProviderRow } from './store.ts'
+import type { ModelsSettingsStore, ProviderRow } from './store.ts'
+import type { SettingsSchemaOperations } from './schema-operations.ts'
 import { ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
-import type { PiAiOAuthClient } from './PiAiOAuthLogin.tsx'
-import type { PiAiOAuthProviderView } from '@deepseek-ai/dsh-llm-pi-ai-oauth/types'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
 
@@ -30,12 +29,14 @@ import styles from './ModelsSection.module.css'
 export interface ModelsSectionInjected {
   /** The page store (loaded on mount, refreshed on pushed invalidations). */
   controller: ModelsSettingsStore
-  /** uSES subscription hook bound to the store. */
-  useSnapshot: SnapshotSelectorHook<ModelsSettingsState>
+  hooks: {
+    /** Page snapshot bound by the UI renderer as useSnapshot. */
+    snapshot: ModelsSettingsStore['store']
+  }
   /** Wire faces the editor writes through. */
   api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>
-  /** Provider-native OAuth calls and login-event subscription. */
-  oauth?: PiAiOAuthClient
+  /** Settings schema and immutable path callbacks. */
+  schema: SettingsSchemaOperations
   /** Section copy. */
   t: (key: keyof typeof en) => string
 }
@@ -44,7 +45,9 @@ export interface ModelsSectionInjected {
  * Props delivered by the slot outlet: the inject face spread flat (the
  * renderer erases the share boundary at the render call).
  */
-export type ModelsSectionProps = Partial<ModelsSectionInjected>
+export type ModelsSectionProps = Partial<InjectFace<ModelsSectionInjected>>
+
+type ModelsSectionFace = InjectFace<ModelsSectionInjected>
 
 /** Provider identity shared by row actions and confirmation copy. */
 export interface ProviderIdentity {
@@ -62,35 +65,24 @@ interface EditorTarget extends ProviderIdentity {
   credentialRef?: string
   /** The adapter reports this route as one it does not ship (see {@link ProviderEditorProps.declared}). */
   declared?: boolean
-  /** Provider-native OAuth state, when supported. */
-  oauth?: PiAiOAuthProviderView
 }
 
 /** Values that vary around the shared provider-editor rendering. */
 interface ProviderEditorRenderProps extends Pick<
   ProviderEditorProps,
-  'namespace' | 'api' | 't' | 'readOnly' | 'onClose'
+  'namespace' | 'schema' | 'api' | 't' | 'readOnly' | 'onClose'
 > {
   target: EditorTarget
-  controller: ModelsSettingsStore
-  oauthClient: PiAiOAuthClient | undefined
 }
 
 /** Render an editor for either the setup posture or an expanded provider row. */
-function renderProviderEditor({ target, controller, oauthClient, ...props }: ProviderEditorRenderProps): ReactNode {
+function renderProviderEditor({ target, ...props }: ProviderEditorRenderProps): ReactNode {
   return (
     <ProviderEditor
       provider={target.provider}
       displayName={target.displayName}
       settingsPath={target.settingsPath}
       {...target.declared === true ? { declared: true } : {}}
-      {...target.oauth === undefined || oauthClient === undefined ? {} : {
-        oauth: {
-          provider: target.oauth,
-          client: oauthClient,
-          onChanged: () => { void controller.load() },
-        },
-      }}
       {...props}
     />
   )
@@ -143,7 +135,6 @@ export async function removeProviderProfile(
 export function needsSetup(row: ProviderRow, anyUsable: boolean): boolean {
   if (anyUsable) return false
   if (row.entry.settingsPath.length > 0) return false
-  if (row.oauth?.oauthOnly === true) return !row.oauth.configured
   return row.credential?.configured !== true
 }
 
@@ -164,7 +155,6 @@ function targetOf(row: ProviderRow): EditorTarget {
     // route-level fields only a declared route owns off the card, exactly as
     // it leaves the custom tag off the row.
     ...row.entry.declared === true ? { declared: true } : {},
-    ...row.oauth === undefined ? {} : { oauth: row.oauth },
   }
 }
 
@@ -186,13 +176,16 @@ export function providerCopy(template: string, target: ProviderIdentity): string
  * @returns the section, or null while the shell has not injected yet.
  */
 export function ModelsSection(props: ModelsSectionProps): ReactNode {
-  const { controller, useSnapshot, api, oauth, t } = props
-  if (controller === undefined || useSnapshot === undefined || api === undefined || t === undefined) return null
-  return <Loaded injected={{ controller, useSnapshot, api, ...oauth === undefined ? {} : { oauth }, t }} />
+  const { controller, useSnapshot, api, schema, t } = props
+  if (
+    controller === undefined || useSnapshot === undefined || api === undefined
+    || schema === undefined || t === undefined
+  ) return null
+  return <Loaded injected={{ controller, useSnapshot, api, schema, t }} />
 }
 
-function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
-  const { controller, api, oauth, t } = injected
+function Loaded({ injected }: { injected: ModelsSectionFace }): ReactNode {
+  const { controller, api, schema, t } = injected
   const state = injected.useSnapshot(snapshot => snapshot)
   const [editing, setEditing] = useState<EditorTarget | undefined>(undefined)
   const [adding, setAdding] = useState(false)
@@ -281,17 +274,12 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
   const anyUsable = state.rows.some(providerUsable)
   const configured = state.rows.filter(row => row.configured)
   const addable = state.rows.filter(row => !row.configured && row.entry.settingsNs !== '')
-  const currentAddRow = editing === undefined
-    ? undefined
-    : state.rows.find(row => row.entry.provider === editing.provider)
-  const addTarget = adding
-    ? currentAddRow === undefined ? editing : targetOf(currentAddRow)
-    : undefined
+  const addTarget = adding ? editing : undefined
   const addNamespace = addTarget === undefined ? undefined : state.namespaces.get(addTarget.settingsNs)
   // Hand-declared routes live in the pi-ai namespace, which is also the only
   // one whose schema names the protocols one may speak; without it mounted
   // there is nothing to declare and the entry point stays disabled.
-  const protocols = protocolChoices(state.namespaces.get('llm-pi-ai'))
+  const protocols = protocolChoices(state.namespaces.get('llm-pi-ai'), schema)
 
   return (
     <div className={styles['section']}>
@@ -318,9 +306,8 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
               <li key={row.entry.provider} className={styles['setupCard']}>
                 {renderProviderEditor({
                   target,
-                  controller,
-                  oauthClient: oauth,
                   namespace,
+                  schema,
                   api,
                   t,
                   readOnly: !state.writable,
@@ -331,11 +318,9 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
           }
           const open = !adding && editing?.provider === row.entry.provider
           const credentialConfigured = row.credential?.configured === true
-          const oauthConfigured = row.oauth?.configured === true
           const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
             && row.credential?.configured === false
-          const oauthMissing = row.oauth?.oauthOnly === true && !oauthConfigured
           return (
             <li key={row.entry.provider} className={styles['rowCard']}>
               <div className={styles['rowHead']}>
@@ -347,22 +332,22 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                   {row.entry.declared === true
                     ? <span className={styles['rowTag']}>{t('customTag')}</span>
                     : null}
-                  {credentialConfigured || oauthConfigured
+                  {credentialConfigured
                     ? (
                       <span
                         className={`${styles['credentialDot']} ${styles['credentialDotConfigured']}`}
                         role="img"
-                        aria-label={oauthConfigured ? t('oauthConnected') : t('credentialConfigured')}
-                        title={oauthConfigured ? t('oauthConnected') : t('credentialConfigured')}
+                        aria-label={t('credentialConfigured')}
+                        title={t('credentialConfigured')}
                       />
                     )
-                    : credentialMissing || oauthMissing
+                    : credentialMissing
                       ? (
                         <span
                           className={`${styles['credentialDot']} ${styles['credentialDotMissing']}`}
                           role="img"
-                          aria-label={oauthMissing ? t('oauthRequired') : t('credentialMissing')}
-                          title={oauthMissing ? t('oauthRequired') : t('credentialMissing')}
+                          aria-label={t('credentialMissing')}
+                          title={t('credentialMissing')}
                         />
                       )
                       : null}
@@ -406,9 +391,8 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
               {open
                 ? renderProviderEditor({
                   target,
-                  controller,
-                  oauthClient: oauth,
                   namespace,
+                  schema,
                   api,
                   t,
                   readOnly: !state.writable,
@@ -447,15 +431,9 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                 displayName={addTarget.displayName}
                 hideTitle
                 namespace={addNamespace}
+                schema={schema}
                 settingsPath={addTarget.settingsPath}
                 api={api}
-                {...addTarget.oauth === undefined || oauth === undefined ? {} : {
-                  oauth: {
-                    provider: addTarget.oauth,
-                    client: oauth,
-                    onChanged: () => { void controller.load() },
-                  },
-                }}
                 t={t}
                 readOnly={!state.writable}
                 onClose={(changed) => { closeEditor(changed, addTarget) }}

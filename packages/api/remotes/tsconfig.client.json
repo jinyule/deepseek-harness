@@ -25,6 +25,12 @@
 
     },
     {
+      "path": "../../context/file-reference"
+    },
+    {
+      "path": "../../context/session-reference"
+    },
+    {
       "path": "../../extensions/cordis-host-runner"
     },
     {
@@ -41,9 +47,6 @@
     },
     {
       "path": "../../llm/llm"
-    },
-    {
-      "path": "../../llm/llm-pi-ai-oauth"
     },
     {
       "path": "../../preset/agent-presets"
