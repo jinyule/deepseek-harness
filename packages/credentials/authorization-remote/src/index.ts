@@ -184,7 +184,7 @@ declare module '@deepseek-ai/cordis' {
 
 /** Browser-facing projection of registered authorization flows. */
 export class AuthorizationRemoteService extends Service {
-  static inject = ['authorization', 'credentials', 'connection']
+  static inject = ['authorization', 'credentials', 'connection', 'webServer']
 
   /** Configurable long-poll and retention limits. */
   static Config: s<Config> = s.object({
@@ -213,8 +213,7 @@ export class AuthorizationRemoteService extends Service {
     this.ctx.effect(() => this.ctx.connection.rpc.handle(
       AUTHORIZATION_RPC_CHANNEL,
       this.dispatch,
-      { authority: 'loopback' },
-    ), 'authorization-remote: loopback RPC channel')
+    ), 'authorization-remote: authenticated RPC channel')
     this.ctx.effect(() => async () => { await this.shutdown() }, 'authorization-remote: attempt lifecycle')
   }
 
@@ -350,7 +349,7 @@ export class AuthorizationRemoteService extends Service {
     return OK
   }
 
-  /** Validate and dispatch one request from the loopback-only Connection channel. */
+  /** Validate and dispatch one request from the authenticated Connection channel. */
   private readonly dispatch: ConnectionRpcHandler = async (endpoint, payload, signal) => {
     if (!isAuthorizationEndpoint(endpoint)) return badRequest()
     const parsed = authorizationRequestSchemas[endpoint].safeParse(payload)
@@ -362,7 +361,7 @@ export class AuthorizationRemoteService extends Service {
       if (signal.aborted) {
         return { ok: false, error: { code: 'cancelled', message: 'Authorization request was cancelled.', details: {} } }
       }
-      this.ctx.logger.warn('authorization-remote: loopback RPC request failed')
+      this.ctx.logger.warn('authorization-remote: authenticated RPC request failed')
       return { ok: false, error: { code: 'internal', message: 'Authorization request failed.', details: {} } }
     }
   }

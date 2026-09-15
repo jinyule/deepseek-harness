@@ -1,25 +1,110 @@
+---
+description: "通用授权流程的认证浏览器投影，提供不含值的账号状态和有界交互尝试。"
+kind: "package-reference"
+---
+
 # @deepseek-ai/dsh-authorization-remote
 
 [English](README.md) | 中文
 
-面向 [`dsh-authorization`](../authorization/README.zh.md) 的回环 Web 交互插件。它列出已注册 flow 及不含值的凭据状态，发起由浏览器拥有且 id 不透明的尝试，通过有序长轮询传递 notice 与 `text`／`secret`／`select` prompt，接收 prompt 回答、取消尝试，并遗忘可写的本地记录。OAuth、设备码与 API 密钥等提供方专属行为仍归注册 flow 的插件所有；本包只投影通用交互词汇。
+## 概述
 
-Host 在 `/authorization` 注册一条 `authority: loopback` 的私有 Connection 通道。它刻意不向通用 Typert `/api` BFF 添加方法：受信任的局域网主机可以使用该 API，但在产品具备真正的远端用户认证之前，账号登录界面只能提供给通过回环连接的浏览器。本包的 client 半边把同一套严格请求与响应 codec 贡献给浏览器模块表。任何响应都不含凭据值与不透明 grant payload；跨通道的只有配置状态、记录类别和可写性。notice 链接仅允许 HTTP(S)，prompt 回答有可配置的 UTF-8 字节上限，畸形值会被拒绝且不会被回显或写入日志。
+使用此包可以把已安装的提供方登录流程开放给已认证浏览器，而不暴露凭据值。它的 Host 半边拥有私有通道，browser 半边提供 `ctx.authorizationClient`。浏览器可以列出账号状态、启动和取消尝试、接收通知或问题、回答问题，以及删除可写的本地记录。当 Web 组合需要通用 OAuth、设备码或 API 密钥交互时选择它。尝试只存在于当前进程，并受时间和回答大小限制。
 
-尝试只存活于 Host 进程。每次尝试都有不透明的 attempt 与 prompt id，最多存在一个活动 poll 与 prompt，并受不活动超时和结算后有界保留约束。浏览器 teardown 会取消其仍在运行的尝试；Host teardown 会停止接纳、终止全部执行、拒绝待处理工作，并等待 flow 延续体静止。`forget` 只删除本地记录，不声称已在提供方侧吊销。
+## 目录
 
-配置项控制空 poll 心跳（`pollTimeoutMs`）、遗弃尝试超时（`orphanTimeoutMs`）、终态事件保留时长（`completedRetentionMs`）和 prompt 回答最大尺寸（`maxPromptResponseBytes`）。心跳必须短于遗弃超时。
+- [使用此包](#use-this-package)
+- [了解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
 
+-----
+
+<a id="use-this-package"></a>
+## 使用此包
+
+在授权、凭据、Connection 和 WebServer 服务之后挂载此包。Connection 条目必须注入 WebServer，使自定义认证通道可以在调用方 fiber 中拥有路由。提供方插件仍然拥有其登录协议，并通过 `ctx.authorization` 注册流程。
+
+### 何时选择它
+
+当浏览器界面必须通过一个与提供方无关的协议驱动授权时选择它。非浏览器应用可以直接使用 `dsh-authorization`，并跳过此投影。
+
+### 最小配置
+
+```yaml
+- id: authorization
+  name: '@deepseek-ai/dsh-authorization'
+- id: authorization-remote
+  name: '@deepseek-ai/dsh-authorization-remote'
+```
+
+| 字段 | 默认值 | 含义 |
+|---|---|---|
+| `pollTimeoutMs` | `15000` | 空轮询返回 idle 事件前的最长持续时间 |
+| `orphanTimeoutMs` | `60000` | 运行中尝试因不活动而取消前的持续时间 |
+| `completedRetentionMs` | `60000` | 未消费终止事件的最长保留时间 |
+| `maxPromptResponseBytes` | `65536` | 单次问题回答的最大 UTF-8 大小 |
+
+`pollTimeoutMs` 必须短于 `orphanTimeoutMs`。[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-authorization-remote)是所有已接受字段的完整来源。
+
+-----
+
+<a id="understand-the-implementation"></a>
+## 了解实现
+
+<details>
+<summary>实现内部细节——点击展开</summary>
+
+Connection 使用 Host、Origin 和签名浏览器会话检查认证私有 `/authorization` 通道。服务分配不透明的尝试和问题标识符，串行化每个尝试的事件队列，验证所有请求和响应值，并从账号描述中移除凭据载荷。浏览器只能收到 HTTP(S) 链接。关闭时会停止接纳、终止提供方工作、完成待处理的轮询和问题，并等待流程延续结束。
+
+| 文件 | 作用 |
+|---|---|
+| [`src/index.ts`](src/index.ts) | Host 服务、尝试生命周期和通道分派 |
+| [`src/api.ts`](src/api.ts) | 通道名称和严格端点编解码器 |
+| [`src/types.ts`](src/types.ts) | 不含值的浏览器协议类型 |
+| [`src/client/index.ts`](src/client/index.ts) | 浏览器服务与严格通道调用方 |
+| — | 不发布运行时不变量伴生插件；一个服务表拥有尝试、轮询和问题，行为测试验证它们的关系。 |
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## 进一步探索
+
+- [授权能力](../authorization/README.zh.md) — 提供方流程注册和交互词汇。
+- [凭据子系统](../../../docs/subsystems/credentials.zh.md) — 存储、授权和提供方关系。
+- [账号设置区段](../../client/ui-settings-authorization/README.zh.md) — 随附的展示界面。
+
+-----
+
+<a id="model-experience"></a>
 ## 模型体验
 
-无，因为授权是配置期与人的对话，任何通道值都不会抵达模型请求。
+无，因为授权是与人的配置期对话，任何通道值都不会进入模型请求。
 
-#### KV Cache 影响
+#### KV 缓存影响
 
-无；本包既不组装也不发送提供方请求。
+无；此包既不组装也不发送提供方请求。
 
-## 已知限制与暂缓事项
+## 已知限制与延期工作
 
-- **仅限回环** —— 在存在带用户认证的远端 authority 之前，远端浏览器不能使用该通道，也看不到“账号”分区。
-- **尝试不可持久** —— 刷新拥有它的页面，或让页面失联超过遗弃超时，都会取消尝试；用户需要重新开始。
-- **遗忘不等于吊销** —— 移除本地记录不会通知其签发方。
+<a id="known-limitations-and-deferred-work"></a>
+
+这些限制定义浏览器交互的生命周期和权限范围。
+
+- **仅限已认证浏览器** — Connection 会拒绝没有有效浏览器会话或 Host、Origin 不允许的请求。
+- **尝试不持久化** — 拥有页面失联超过孤儿超时后，需要启动新尝试。
+- **忘记不等于撤销** — 删除本地记录不会通知其签发方。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者工作上下文——点击展开</summary>
+
+无。
+
+</details>

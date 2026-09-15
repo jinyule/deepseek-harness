@@ -25,6 +25,14 @@ export const en = {
   code: 'Code',
   unsafeLink: 'The provider supplied a link with an unsupported scheme, so it was not opened.',
   selectPlaceholder: 'Choose an option',
+  unavailable: 'Authorization settings are unavailable.',
+  loadFailed: 'Authorization settings could not be loaded.',
+  startFailed: 'Sign-in could not be started.',
+  promptInactive: 'This sign-in question is no longer active.',
+  answerFailed: 'The answer could not be sent.',
+  cancelFailed: 'Sign-in could not be cancelled.',
+  forgetFailed: 'The local credential could not be removed.',
+  updatesStopped: 'Sign-in updates stopped.',
 }
 
 /** Authorization dictionary key union. */
@@ -55,4 +63,12 @@ export const zh: { [Key in keyof typeof en]: string } = {
   code: '代码',
   unsafeLink: '提供方返回了不支持的链接协议，因此未打开该链接。',
   selectPlaceholder: '请选择',
+  unavailable: '授权设置当前不可用。',
+  loadFailed: '无法加载授权设置。',
+  startFailed: '无法开始登录。',
+  promptInactive: '此登录问题已不再有效。',
+  answerFailed: '无法发送回答。',
+  cancelFailed: '无法取消登录。',
+  forgetFailed: '无法移除本地凭据。',
+  updatesStopped: '登录状态更新已停止。',
 }

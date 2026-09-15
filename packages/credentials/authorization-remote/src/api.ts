@@ -1,6 +1,6 @@
 /**
  * Browser-safe authorization RPC protocol. The schemas validate both sides of
- * the private loopback channel without exposing credential record values.
+ * the private authenticated channel without exposing credential record values.
  * @module @deepseek-ai/dsh-authorization-remote/api
  */
 
@@ -21,7 +21,7 @@ import type {
   AuthorizationStartResult,
 } from './types.ts'
 
-/** Logical Connection channel reserved for local authorization interactions. */
+/** Logical Connection channel reserved for authenticated authorization interactions. */
 export const AUTHORIZATION_RPC_CHANNEL = '/authorization'
 
 /** Methods carried by the private authorization channel. */

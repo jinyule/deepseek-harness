@@ -24,7 +24,7 @@ interface Harness {
   readonly fiber: ReturnType<Context['plugin']>
   readonly service: AuthorizationRemoteService
   readonly call: ConnectionRpcHandler
-  readonly authority: string
+  readonly channel: string
   readonly credentials: {
     describeRecord: ReturnType<typeof vi.fn>
     deleteRecord: ReturnType<typeof vi.fn>
@@ -79,18 +79,19 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
     begin: options.begin ?? (async () => ({ status: 'authorized' as const })),
   } as never)
   let call: ConnectionRpcHandler | undefined
-  let authority: string | undefined
-  const connection: HostConnectionHandle = {
+  let channel: string | undefined
+  const connection = {
     rpc: {
-      handle: (_channel, handler, request) => {
+      handle: (registeredChannel: string, handler: ConnectionRpcHandler) => {
         call = handler
-        authority = request.authority
+        channel = registeredChannel
         return async () => {}
       },
       intercept: () => async () => {},
     },
-  }
+  } as unknown as HostConnectionHandle
   ctx.provide('connection', connection)
+  ctx.provide('webServer', {} as never)
   const fiber = ctx.plugin(AuthorizationRemoteService, CONFIG)
   await fiber
   return {
@@ -98,7 +99,7 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
     fiber,
     service: ctx.authorizationRemote,
     call: call!,
-    authority: authority!,
+    channel: channel!,
     credentials,
   }
 }
@@ -115,10 +116,10 @@ function eventOf(result: AuthorizationPollResult): Extract<AuthorizationPollResu
   return result.value
 }
 
-describe('authorization loopback RPC', () => {
-  it('registers a loopback channel, validates requests, and returns only credential metadata', async () => {
+describe('authenticated authorization RPC', () => {
+  it('registers its private channel, validates requests, and returns only credential metadata', async () => {
     const app = await harness()
-    expect(app.authority).toBe('loopback')
+    expect(app.channel).toBe('/authorization')
 
     await expect(app.call('missing', {}, new AbortController().signal)).resolves.toMatchObject({
       ok: false,
@@ -167,7 +168,7 @@ describe('authorization loopback RPC', () => {
       ok: false,
       error: { code: 'internal', message: 'Authorization request failed.', details: {} },
     })
-    expect(warn).toHaveBeenCalledWith('authorization-remote: loopback RPC request failed')
+    expect(warn).toHaveBeenCalledWith('authorization-remote: authenticated RPC request failed')
 
     const attemptId = attemptOf(app.service.start({ key: KEY }))
     const controller = new AbortController()
@@ -398,6 +399,7 @@ describe('authorization attempt projection', () => {
     ctx.provide('credentials', {} as never)
     ctx.provide('authorization', {} as never)
     ctx.provide('connection', {} as never)
+    ctx.provide('webServer', {} as never)
     await expect(ctx.plugin(AuthorizationRemoteService, {
       ...CONFIG,
       pollTimeoutMs: CONFIG.orphanTimeoutMs,

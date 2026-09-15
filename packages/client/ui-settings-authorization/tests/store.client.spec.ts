@@ -1,7 +1,9 @@
-import type { AuthorizationClient } from '@deepseek-ai/dsh-client-authorization/client'
+import type { AuthorizationClient } from '@deepseek-ai/dsh-authorization-remote/client'
 import type { AuthorizationAttemptRequest } from '@deepseek-ai/dsh-authorization-remote/types'
+import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import { describe, expect, it, vi } from 'vitest'
+import { en, zh } from '../src/client/locales.ts'
 import { AuthorizationSettingsStore } from '../src/client/store.ts'
 
 const KEY = credentialKey('llm-pi-ai', 'openai-codex')
@@ -33,6 +35,11 @@ function remote(overrides: Partial<AuthorizationClient> = {}): AuthorizationClie
   }
 }
 
+/** Store with the production English dictionary unless a test selects another locale. */
+function settingsStore(client: AuthorizationClient): AuthorizationSettingsStore {
+  return new AuthorizationSettingsStore(client, makeTranslate(en))
+}
+
 describe('AuthorizationSettingsStore', () => {
   it('loads entries and drives a notice, prompt answer, and successful settlement', async () => {
     const terminal = Promise.withResolvers<never>()
@@ -62,7 +69,7 @@ describe('AuthorizationSettingsStore', () => {
         return terminal.promise
       }),
     })
-    const store = new AuthorizationSettingsStore(api)
+    const store = settingsStore(api)
 
     await expect(store.load()).resolves.toEqual({ ok: true })
     expect(store.store.getSnapshot()).toMatchObject({ status: 'ready', entries: [ENTRY] })
@@ -94,12 +101,12 @@ describe('AuthorizationSettingsStore', () => {
     ] as const
     for (const response of cases) {
       const api = remote({ poll: vi.fn(async () => response as never) })
-      const store = new AuthorizationSettingsStore(api)
+      const store = settingsStore(api)
       await store.start(KEY)
       await vi.waitFor(() => { expect(store.store.getSnapshot().attempts[KEY]?.status).toBe('failed') })
     }
 
-    const throwing = new AuthorizationSettingsStore(remote({
+    const throwing = settingsStore(remote({
       poll: vi.fn(async () => { throw new Error('stream stopped') }),
     }))
     await throwing.start(KEY)
@@ -108,7 +115,7 @@ describe('AuthorizationSettingsStore', () => {
     })
 
     let polls = 0
-    const withdrawn = new AuthorizationSettingsStore(remote({
+    const withdrawn = settingsStore(remote({
       poll: vi.fn(async () => {
         polls += 1
         if (polls === 1) {
@@ -140,7 +147,7 @@ describe('AuthorizationSettingsStore', () => {
       ok: true,
       value: { ok: false, error: { code: 'already-in-flight', message: 'busy' } },
     } as const
-    const store = new AuthorizationSettingsStore(remote({
+    const store = settingsStore(remote({
       start: vi.fn()
         .mockResolvedValueOnce(outerFailure)
         .mockResolvedValueOnce(businessFailure)
@@ -163,7 +170,7 @@ describe('AuthorizationSettingsStore', () => {
     await expect(store.forget(KEY)).resolves.toEqual({ ok: false, message: 'carrier' })
     await expect(store.forget(KEY)).resolves.toEqual({ ok: false, message: 'forget threw' })
 
-    const loadThrows = new AuthorizationSettingsStore(remote({
+    const loadThrows = settingsStore(remote({
       list: vi.fn(async () => { throw new Error('load threw') }),
     }))
     await expect(loadThrows.load()).resolves.toEqual({ ok: false, message: 'load threw' })
@@ -192,7 +199,7 @@ describe('AuthorizationSettingsStore', () => {
         .mockRejectedValueOnce(new Error('cancel threw'))
         .mockResolvedValue({ ok: true, value: { ok: true, value: { accepted: true } } }),
     })
-    const store = new AuthorizationSettingsStore(api)
+    const store = settingsStore(api)
     await expect(store.answer(KEY, 'code')).resolves.toMatchObject({ ok: false })
     await expect(store.cancel(KEY)).resolves.toEqual({ ok: true })
     await store.start(KEY)
@@ -217,7 +224,7 @@ describe('AuthorizationSettingsStore', () => {
 
   it('contains non-Error failures and ignores late work after disposal', async () => {
     const loading = Promise.withResolvers<never>()
-    const late = new AuthorizationSettingsStore(remote({ list: vi.fn(() => loading.promise) }))
+    const late = settingsStore(remote({ list: vi.fn(() => loading.promise) }))
     const load = late.load()
     await Promise.resolve()
     await late.dispose()
@@ -225,7 +232,7 @@ describe('AuthorizationSettingsStore', () => {
     await expect(load).resolves.toEqual({ ok: true })
 
     const failing = Promise.withResolvers<never>()
-    const lateFailure = new AuthorizationSettingsStore(remote({ list: vi.fn(() => failing.promise) }))
+    const lateFailure = settingsStore(remote({ list: vi.fn(() => failing.promise) }))
     const failedLoad = lateFailure.load()
     await Promise.resolve()
     await lateFailure.dispose()
@@ -235,7 +242,13 @@ describe('AuthorizationSettingsStore', () => {
       message: 'Authorization settings could not be loaded.',
     })
 
-    const nonErrors = new AuthorizationSettingsStore(remote({
+    const localized = new AuthorizationSettingsStore(
+      remote({ list: vi.fn(async () => { throw null }) }),
+      makeTranslate(zh),
+    )
+    await expect(localized.load()).resolves.toEqual({ ok: false, message: '无法加载授权设置。' })
+
+    const nonErrors = settingsStore(remote({
       start: vi.fn(async () => { throw null }),
       answer: vi.fn(async () => { throw null }),
       cancel: vi.fn(async () => { throw null }),
@@ -259,7 +272,7 @@ describe('AuthorizationSettingsStore', () => {
     await expect(nonErrors.cancel(KEY)).resolves.toEqual({ ok: false, message: 'Sign-in could not be cancelled.' })
     await expect(nonErrors.forget(KEY)).resolves.toEqual({ ok: false, message: 'The local credential could not be removed.' })
 
-    const pollNonError = new AuthorizationSettingsStore(remote({
+    const pollNonError = settingsStore(remote({
       poll: vi.fn(async () => { throw null }),
     }))
     await pollNonError.start(KEY)
@@ -269,14 +282,16 @@ describe('AuthorizationSettingsStore', () => {
       })
     })
 
-    const cancelling = new AuthorizationSettingsStore(remote({
-      poll: vi.fn(() => new Promise<never>(() => {})),
+    const cancelling = settingsStore(remote({
+      poll: vi.fn((_request: AuthorizationAttemptRequest, signal?: AbortSignal) => new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => { reject(new Error('poll stopped')) }, { once: true })
+      })),
       cancel: vi.fn(async () => { throw new Error('ignored during disposal') }),
     }))
     await cancelling.start(KEY)
     await cancelling.dispose()
 
-    const internals = new AuthorizationSettingsStore(remote())
+    const internals = settingsStore(remote())
     const applyEvent = Reflect.get(internals, 'applyEvent') as (key: typeof KEY, event: object) => boolean
     const failAttempt = Reflect.get(internals, 'failAttempt') as (key: typeof KEY, message: string) => void
     expect(Reflect.apply(applyEvent, internals, [KEY, { kind: 'idle' }])).toBe(true)

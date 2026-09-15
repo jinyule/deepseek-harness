@@ -2,24 +2,29 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CredentialKey } from '@deepseek-ai/dsh-credentials/types'
 import type { AuthorizationPromptView } from '@deepseek-ai/dsh-authorization-remote/types'
-import type { AuthorizationSettingsStore } from './store.ts'
-import type { en } from './locales.ts'
+import type { AuthorizationSettingsStore, AuthorizationUiActionResult } from './store.ts'
 import css from './AuthorizationSection.module.css'
 
 /** Injected dependencies of the authorization settings section. */
 export interface AuthorizationSectionInjected {
-  readonly controller: AuthorizationSettingsStore
   readonly hooks: {
     readonly accounts: AuthorizationSettingsStore['store']
   }
-  readonly t: (key: keyof typeof en) => string
+  readonly load: () => Promise<AuthorizationUiActionResult>
+  readonly start: (key: CredentialKey, method?: string) => Promise<AuthorizationUiActionResult>
+  readonly answer: (key: CredentialKey, value: string) => Promise<AuthorizationUiActionResult>
+  readonly cancel: (key: CredentialKey) => Promise<AuthorizationUiActionResult>
+  readonly forget: (key: CredentialKey) => Promise<AuthorizationUiActionResult>
 }
 
-/** Props delivered by the settings slot outlet. */
-export type AuthorizationSectionProps = Partial<InjectFace<AuthorizationSectionInjected>>
+/** Props delivered by the settings slot outlet from its runtime, inject, and locale shares. */
+export type AuthorizationSectionProps =
+  & PropsRuntime<'settings.section'>
+  & InjectFace<AuthorizationSectionInjected>
+  & PropsLocale<'settings.authorization'>
 
 /** Render a prompt input with state scoped to its opaque prompt id. */
 function PromptForm({
@@ -30,7 +35,7 @@ function PromptForm({
 }: {
   readonly prompt: AuthorizationPromptView
   readonly submitting: boolean
-  readonly t: AuthorizationSectionInjected['t']
+  readonly t: AuthorizationSectionProps['t']
   readonly onSubmit: (value: string) => void
 }): ReactNode {
   const [value, setValue] = useState('')
@@ -76,19 +81,14 @@ function PromptForm({
 
 /** Render the authorization settings content column. */
 export function AuthorizationSection(props: AuthorizationSectionProps): ReactNode {
-  const { controller, useAccounts, t } = props
-  if (controller === undefined || useAccounts === undefined || t === undefined) return null
-  return <Loaded controller={controller} useAccounts={useAccounts} t={t} />
-}
-
-function Loaded({ controller, useAccounts, t }: InjectFace<AuthorizationSectionInjected>): ReactNode {
+  const { useAccounts, load, start, answer, cancel, forget, t } = props
   const state = useAccounts(snapshot => snapshot)
   const [actionKey, setActionKey] = useState<string | undefined>(undefined)
   const [actionError, setActionError] = useState<string | undefined>(undefined)
 
-  useEffect(() => { if (state.status === 'idle') void controller.load() }, [controller, state.status])
+  useEffect(() => { if (state.status === 'idle') void load() }, [load, state.status])
 
-  const run = (key: CredentialKey, action: () => Promise<{ ok: boolean; message?: string }>): void => {
+  const run = (key: CredentialKey, action: () => Promise<AuthorizationUiActionResult>): void => {
     setActionKey(key)
     setActionError(undefined)
     void action().then((result) => {
@@ -105,7 +105,7 @@ function Loaded({ controller, useAccounts, t }: InjectFace<AuthorizationSectionI
         ? (
           <div className={css.error} role="alert">
             <span>{state.error}</span>
-            <Button size="sm" variant="outline" onClick={() => { void controller.load() }}>{t('retry')}</Button>
+            <Button size="sm" variant="outline" onClick={() => { void load() }}>{t('retry')}</Button>
           </div>
         )
         : null}
@@ -132,7 +132,7 @@ function Loaded({ controller, useAccounts, t }: InjectFace<AuthorizationSectionI
                       size="sm"
                       variant="outline"
                       disabled={acting}
-                      onClick={() => { run(entry.key, () => controller.forget(entry.key)) }}
+                      onClick={() => { run(entry.key, () => forget(entry.key)) }}
                     >
                       {acting ? t('forgetting') : t('forget')}
                     </Button>
@@ -147,7 +147,7 @@ function Loaded({ controller, useAccounts, t }: InjectFace<AuthorizationSectionI
                     size="sm"
                     variant="primary"
                     disabled={entry.inFlight || running || acting}
-                    onClick={() => { run(entry.key, () => controller.start(entry.key, method.id)) }}
+                    onClick={() => { run(entry.key, () => start(entry.key, method.id)) }}
                   >
                     {entry.methods.length === 1 ? method.label : `${t('signIn')}: ${method.label}`}
                   </Button>
@@ -158,7 +158,7 @@ function Loaded({ controller, useAccounts, t }: InjectFace<AuthorizationSectionI
                       size="sm"
                       variant="outline"
                       disabled={acting}
-                      onClick={() => { run(entry.key, () => controller.cancel(entry.key)) }}
+                      onClick={() => { run(entry.key, () => cancel(entry.key)) }}
                     >
                       {acting ? t('cancelling') : t('cancel')}
                     </Button>
@@ -185,7 +185,7 @@ function Loaded({ controller, useAccounts, t }: InjectFace<AuthorizationSectionI
                     prompt={attempt.prompt}
                     submitting={acting}
                     t={t}
-                    onSubmit={(value) => { run(entry.key, () => controller.answer(entry.key, value)) }}
+                    onSubmit={(value) => { run(entry.key, () => answer(entry.key, value)) }}
                   />
                 )}
               {attempt?.status === 'authorized' ? <p className={css.success}>{t('authorized')}</p> : null}

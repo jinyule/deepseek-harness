@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
+import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuthorizationSection } from '../src/client/AuthorizationSection.tsx'
@@ -14,6 +15,14 @@ const GOOGLE = credentialKey('llm-pi-ai', 'google')
 const ATTEMPT = '00000000-0000-4000-8000-000000000000' as never
 const PROMPT = '00000000-0000-4000-8000-000000000001' as never
 const SELECT_PROMPT = '00000000-0000-4000-8000-000000000002' as never
+const unusedHook = (() => { throw new Error('unused standard hook') }) as never
+const standardProps: GlobalStandardProps = {
+  usePanelInfo: selector => selector({ activePanelId: null }),
+  useSessions: unusedHook,
+  useSessionPendingInteraction: unusedHook,
+  useWorkspaces: unusedHook,
+  useResource: unusedHook,
+}
 
 interface TestController extends AuthorizationSettingsStore {
   readonly loadSpy: ReturnType<typeof vi.fn>
@@ -28,7 +37,7 @@ afterEach(cleanup)
 /** Controller with stable methods whose presentation calls can be observed. */
 function controller(): TestController {
   const accepted = async () => ({ ok: true as const })
-  const value = new AuthorizationSettingsStore({} as never)
+  const value = new AuthorizationSettingsStore({} as never, makeTranslate(en))
   const loadSpy = vi.fn(accepted)
   const startSpy = vi.fn(accepted)
   const answerSpy = vi.fn(accepted)
@@ -45,15 +54,20 @@ function controller(): TestController {
 /** Render the section over the controller's observable snapshot. */
 function mount(value: AuthorizationSettingsStore) {
   return render(<AuthorizationSection
-    controller={value}
+    {...standardProps}
+    close={() => {}}
     useAccounts={bindSnapshotSelector(value.store)}
-    t={key => en[key]}
+    load={() => value.load()}
+    start={(key, method) => value.start(key, method)}
+    answer={(key, answer) => value.answer(key, answer)}
+    cancel={key => value.cancel(key)}
+    forget={key => value.forget(key)}
+    t={makeTranslate(en)}
   />)
 }
 
 describe('AuthorizationSection', () => {
-  it('stays absent until the shell supplies every injected dependency and loads an idle store', async () => {
-    expect(AuthorizationSection({})).toBeNull()
+  it('loads an idle store after the composed slot props mount', async () => {
     const value = controller()
     mount(value)
     await waitFor(() => { expect(value.loadSpy).toHaveBeenCalledOnce() })

@@ -8,15 +8,11 @@
   "references": [
     { "path": "../../../vendor/cordis" },
     { "path": "../ui-slots" },
-    { "path": "../runtime" },
+    { "path": "../store" },
     { "path": "../ui-primitives" },
     { "path": "../ui-settings" },
     { "path": "../locale" },
-    { "path": "../authorization" },
-    { "path": "../connection/tsconfig.client.json" },
-    { "path": "../../util/brand" },
     { "path": "../../credentials/credentials" },
-    { "path": "../../credentials/authorization-remote" },
-    { "path": "../../runtime-diagnostics/invariants" }
+    { "path": "../../credentials/authorization-remote/tsconfig.client.json" }
   ]
 }
