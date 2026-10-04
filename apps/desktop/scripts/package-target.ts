@@ -1,6 +1,6 @@
-/** Build one release target with matching Electron and dsh architecture. */
+/** Build one Desktop target with matching Electron and dsh architecture. */
 
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { join, resolve } from 'node:path'
@@ -196,8 +196,9 @@ interface DesktopPackageInvocation {
   readonly directory: boolean
   readonly prepareOnly: boolean
   readonly unsigned: boolean
+  readonly local: boolean
   readonly check: boolean
-  /** Build identifier to publish under, when this build does not publish the product version. */
+  /** Build identifier when it differs from the product version. */
   readonly requestedBuildVersion: string | undefined
 }
 
@@ -228,6 +229,7 @@ export function parseDesktopPackageInvocation(
       dir: { type: 'boolean', default: false },
       'prepare-only': { type: 'boolean', default: false },
       unsigned: { type: 'boolean', default: false },
+      local: { type: 'boolean', default: false },
       check: { type: 'boolean', default: false },
       'build-version': { type: 'string' },
     },
@@ -236,6 +238,10 @@ export function parseDesktopPackageInvocation(
   const name = positionals[0] ?? hostTargetName(hostPlatform, hostArch)
   if (values.unsigned && name !== 'win-x64') throw new Error('desktop package: --unsigned requires win-x64')
   if (values.unsigned && values['prepare-only']) throw new Error('desktop package: --unsigned cannot use --prepare-only')
+  if (values.local && !name.startsWith('mac-')) throw new Error('desktop package: --local requires macOS')
+  if (values.local && (values.unsigned || values['prepare-only'])) {
+    throw new Error('desktop package: --local cannot combine with --unsigned or --prepare-only')
+  }
   const requestedBuildVersion = values['build-version']?.trim()
   if (values['build-version'] !== undefined && (requestedBuildVersion === undefined || requestedBuildVersion === '')) {
     throw new Error('desktop package: --build-version requires a value')
@@ -245,6 +251,7 @@ export function parseDesktopPackageInvocation(
     directory: values.dir,
     prepareOnly: values['prepare-only'],
     unsigned: values.unsigned,
+    local: values.local,
     check: values.check,
     requestedBuildVersion,
   }
@@ -307,10 +314,10 @@ function runPnpm(
 }
 
 /**
- * Resolve the version one run publishes from what its command line asked for.
+ * Resolve the build version requested on the command line.
  * @param invocation - Validated packaging request.
  * @param productVersion - Version the manifests declare.
- * @param environment - Release settings, which name the bucket automatic numbering reads.
+ * @param environment - Package settings, including the release bucket for automatic numbering.
  * @returns The product version, the requested version, or the next free index for today.
  */
 async function resolveRequestedBuildVersion(
@@ -324,32 +331,45 @@ async function resolveRequestedBuildVersion(
   const paths = desktopTargetBuildPaths(invocation.target.name)
   return suggestDesktopBuildVersion({
     productVersion, target: invocation.target.name, environment,
-    // Unsigned builds land beside the signed output, so numbering has to read the directory this run writes.
-    artifactsRoot: invocation.unsigned ? paths.unsignedArtifacts : paths.artifacts,
+    // Number from the destination this packaging mode writes.
+    artifactsRoot: invocation.local ? paths.localArtifacts : invocation.unsigned ? paths.unsignedArtifacts : paths.artifacts,
   })
 }
 
 async function main(): Promise<void> {
   const invocation = parseDesktopPackageInvocation(process.argv.slice(2))
   const { target } = invocation
-  const environment = loadDesktopPackageEnvironment(target.platform)
+  const environment = invocation.local
+    ? {
+      ...Object.fromEntries(Object.entries(process.env).filter(([name]) =>
+        !(/^(?:APPLE_|(?:WIN_)?CSC_|DOWNLOAD_(?:TEST|PROD)_)/u.test(name) ||
+          /^DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_|MACOS_SIGNING_|MACOS_TEAM_ID)/u.test(name)))),
+      DSH_DESKTOP_APP_ID: 'com.deepseek.harness.local',
+      DSH_DESKTOP_LOCAL_PACKAGE: '1',
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+    }
+    : loadDesktopPackageEnvironment(target.platform)
   const productVersion = packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')
-  // Release settings come from the target dotenv file alone, so the version this run publishes is an
-  // argument; the environment variable below only carries it to the child processes that build.
+  // The version is a command argument; the environment variable carries it to child build processes.
   const buildVersion = await resolveRequestedBuildVersion(invocation, productVersion, environment)
   environment[DESKTOP_BUILD_VERSION_ENV] = buildVersion
   if (invocation.check) {
-    validateDesktopPackageEnvironment(environment, target, invocation)
+    if (invocation.local) resolveMacOSPackageSettings(environment)
+    else validateDesktopPackageEnvironment(environment, target, invocation)
     await requireDesktopToolchain(target.platform, environment)
-    process.stdout.write(`desktop package: ${target.name} would publish ${buildVersion}; local configuration and toolchain valid, signing and notarization were not attempted\n`)
+    process.stdout.write(`desktop package: ${target.name} would build ${buildVersion}; ` +
+      'local configuration and toolchain valid, signing and notarization were not attempted\n')
     return
   }
-  process.stdout.write(`desktop package: ${target.name} publishes ${buildVersion}${buildVersion === productVersion ? '' : ` for product version ${productVersion}`}\n`)
+  const verb = invocation.local ? 'builds' : 'publishes'
+  const product = buildVersion === productVersion ? '' : ` for product version ${productVersion}`
+  process.stdout.write(`desktop package: ${target.name} ${verb} ${buildVersion}${product}\n`)
   const packaged = readDesktopBuildCommit(REPOSITORY_ROOT)
   Object.assign(environment, desktopBuildCommitEnvironment(packaged))
   const secrets = Object.entries(environment).filter(([name]) => /KEY|SECRET|TOKEN|PASSWORD|APPLE_ID/iu.test(name)).map(([, value]) => value ?? '')
   const run = createPackagingRun(join(APP_ROOT, '.desktop-build', 'packaging-runs'), {
-    target: target.name, unsigned: invocation.unsigned, directory: invocation.directory, prepareOnly: invocation.prepareOnly,
+    target: target.name, unsigned: invocation.unsigned, local: invocation.local,
+    directory: invocation.directory, prepareOnly: invocation.prepareOnly,
     version: buildVersion, productVersion, node: process.version,
     commit: packaged.commit,
     dirty: packaged.dirty,
@@ -359,9 +379,14 @@ async function main(): Promise<void> {
   process.env.DSH_DESKTOP_PACKAGING_RUN_DIR = run.directory
   let success = false
   try {
-    await packagingStep(run.directory, 'configuration', async () => { validateDesktopPackageEnvironment(environment, target, invocation) }, secrets)
+    await packagingStep(run.directory, 'configuration', async () => {
+      if (invocation.local) resolveMacOSPackageSettings(environment)
+      else validateDesktopPackageEnvironment(environment, target, invocation)
+    }, secrets)
     await packagingStep(run.directory, 'toolchain', () => requireDesktopToolchain(target.platform, environment), secrets)
-    if (target.platform === 'darwin') {
+    if (invocation.local) {
+      await packagingStep(run.directory, 'macos-local-package', () => packageTarget(invocation, environment, run), secrets)
+    } else if (target.platform === 'darwin') {
       const settings = resolveMacOSPackageSettings(environment)
       recordPackagingEvent(run.directory, { type: 'macos-settings', packConcurrency: settings.packConcurrency,
         downloadProxyConfigured: settings.downloadProxy !== undefined,
@@ -384,11 +409,11 @@ async function main(): Promise<void> {
 }
 
 /**
- * Prepare one release only after its signing preflight, without publishing from the builder.
+ * Prepare and package one Desktop target after the selected signing preflight.
  * @param invocation Validated host, target and packaging mode.
- * @param environment File-owned release configuration.
- * @param run Persistent stage supervisor; required for signed Windows packaging and enabled for all release commands.
- * @returns Resolves after preparation or complete packaging; any failed stage prevents a release record.
+ * @param environment Release or local package configuration.
+ * @param run Persistent stage supervisor for packaging and validation.
+ * @returns Resolves after preparation or complete packaging; failures prevent a release record.
  */
 export async function packageTarget(
   invocation: DesktopPackageInvocation,
@@ -403,7 +428,7 @@ export async function packageTarget(
   const packArguments = mac === undefined ? [] : ['--concurrency', String(mac.packConcurrency)]
   const buildPaths = desktopTargetBuildPaths(target.name)
   const releaseRecordPath = join(buildPaths.artifacts, desktopBuildRecordFilename(target.name))
-  if (!invocation.prepareOnly && !invocation.unsigned) {
+  if (!invocation.prepareOnly && !invocation.unsigned && !invocation.local) {
     rmSync(releaseRecordPath, { force: true })
     rmSync(`${releaseRecordPath}.tmp`, { force: true })
   }
@@ -473,7 +498,18 @@ export async function packageTarget(
   await execute(['run', 'prepare:dsh', ...(signPrimaryRuntime ? ['--defer-runtime-smoke'] : [])], downloadEnv)
   if (signPrimaryRuntime) await execute(['run', 'sign:primary-runtime', '--dsh'], electronBuilderEnv)
   if (invocation.prepareOnly) return
-  if (target.platform === 'darwin' && !invocation.directory) {
+  if (invocation.local) {
+    await execute(desktopElectronBuilderArguments(target, true), electronBuilderEnv)
+    await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts'], targetEnv)
+    if (!invocation.directory) {
+      const appPath = join(buildPaths.localArtifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness Local.app')
+      const zipPath = join(buildPaths.localArtifacts, `deepseek-harness-${resolveDesktopBuildVersion(environment, packageVersion(join(APP_ROOT, 'package.json'), 'desktop package'))}-mac-${target.arch}-local.zip`)
+      await packagingStep(run?.directory, 'archive:macos-local', async () => {
+        rmSync(zipPath, { force: true })
+        execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', appPath, zipPath])
+      })
+    }
+  } else if (target.platform === 'darwin' && !invocation.directory) {
     await execute([
       ...desktopElectronBuilderArguments(target, true),
       '--config.mac.notarize=false',
@@ -496,8 +532,10 @@ export async function packageTarget(
     await signedStage('artifacts', () => execute(desktopElectronBuilderArguments(target, invocation.directory), electronBuilderEnv))
     await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts', ...(invocation.unsigned ? ['--unsigned'] : [])], targetEnv)
   }
-  if (!invocation.directory && !invocation.unsigned) writeReleaseRecord(target, electronBuilderEnv, buildPaths.artifacts)
-  if (journal) recordPackagingEvent(journal, { type: 'artifacts', directory: buildPaths.artifacts })
+  if (!invocation.directory && !invocation.unsigned && !invocation.local) {
+    writeReleaseRecord(target, electronBuilderEnv, buildPaths.artifacts)
+  }
+  if (journal) recordPackagingEvent(journal, { type: 'artifacts', directory: invocation.local ? buildPaths.localArtifacts : buildPaths.artifacts })
 }
 
 if (process.argv[1] !== undefined && import.meta.filename === resolve(process.argv[1])) await main()

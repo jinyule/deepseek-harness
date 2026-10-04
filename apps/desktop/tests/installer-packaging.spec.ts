@@ -77,6 +77,20 @@ describe('installer preparation preserves application dependencies', () => {
     expect(config.artifactName).toBe('deepseek-harness-${version}-${os}-${arch}-unsigned.${ext}')
   })
 
+  it('keeps local macOS artifacts separate from notarized releases', async () => {
+    const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
+    const config = createElectronBuilderConfig({
+      DSH_DESKTOP_APP_ID: 'com.deepseek.harness.local',
+      DSH_DESKTOP_LOCAL_PACKAGE: '1',
+      DSH_DESKTOP_BUILD_VERSION: '0.2.1-alpha.1.20261005.1',
+    }, 'darwin', 'arm64')
+    expect(config.productName).toBe('DeepSeek Harness Local')
+    expect(config.artifactName).toBe('deepseek-harness-${version}-${os}-${arch}-local.${ext}')
+    expect(config.mac).toMatchObject({ identity: '-', notarize: false })
+    expect(config.directories.output).toContain('local-artifacts')
+    expect(config.extraMetadata).toMatchObject({ version: '0.2.1-alpha.1.20261005.1' })
+  })
+
   it('packages every preload entry point the shell loads', async () => {
     const { readdirSync, readFileSync } = await import('node:fs')
     const sourceDirectory = new URL('../src/', import.meta.url)

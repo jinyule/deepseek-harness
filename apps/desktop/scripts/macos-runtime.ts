@@ -1,6 +1,7 @@
 /** Sign final native runtime files before the enclosing Desktop application is signed. */
 
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { closeSync, openSync, readSync } from 'node:fs'
 import { join } from 'node:path'
 import { inventoryDesktopRuntime } from '../src/runtime-tree.ts'
@@ -23,13 +24,13 @@ function magic(path: string): string {
  * Sign and verify every materialized Mach-O file, awaiting all signers on failure.
  * @param root - Self-contained production runtime without symlinks.
  * @param appId - Release application identifier.
- * @param expected - Required signing identity.
+ * @param expected - Required release identity or local ad hoc mode.
  * @param arch - Target runtime architecture, independent of the signing host.
  * @param cacheDirectory - Optional content-addressed cache; requires the keychain-owned signing probe.
  * @returns Number of signed native files.
  */
 export async function signMacOSRuntime(
-  root: string, appId: string, expected: MacOSSigningEnvironment, arch: 'arm64' | 'x64', cacheDirectory?: string,
+  root: string, appId: string, expected: MacOSSigningEnvironment | 'local', arch: 'arm64' | 'x64', cacheDirectory?: string,
 ): Promise<number> {
   const files = inventoryDesktopRuntime(root).map(file => file.path).filter(path => MACH_O_MAGICS.has(magic(join(root, path))))
   const policy = cacheDirectory === undefined ? undefined : macOSCachePolicy(process.env.DSH_DESKTOP_MACOS_SIGNING_PROBE ?? '')
@@ -48,6 +49,14 @@ export async function signMacOSRuntime(
         ? 'node-x64-entitlements.plist' : 'jit-entitlements.plist'
       const entitlements = needsJit ? join(import.meta.dirname, entitlementsFile) : undefined
       const file = join(root, path)
+      if (expected === 'local') {
+        execFileSync('/usr/bin/codesign', [
+          '--force', '--sign', '-', '--identifier', identifier,
+          ...(entitlements === undefined ? [] : ['--entitlements', entitlements]), file,
+        ])
+        execFileSync('/usr/bin/codesign', ['--verify', '--strict', file])
+        continue
+      }
       const thin = ['cefaedfe', 'cffaedfe', 'feedface', 'feedfacf'].includes(magic(file))
       if (cacheDirectory !== undefined && policy !== undefined && thin) {
         if (await cachedMacOSSignature(file, cacheDirectory, policy(identifier, expected, entitlements))) hits++

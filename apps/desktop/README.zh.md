@@ -388,6 +388,8 @@ pnpm run package:desktop:dir
 pnpm run package:desktop:mac:arm64:dir
 ```
 
+若仅在构建这台 Mac 上使用独立应用，运行 `pnpm run package:desktop:mac:arm64:local --build-version <已确认版本>`。它构建同一运行时，临时签名原生文件和 App，执行打包运行时冒烟检查，并在 `apps/desktop/.desktop-build/targets/mac-arm64/local-artifacts/` 下生成 `DeepSeek Harness Local.app` 和 ZIP。本地应用使用独立的应用 ID，且没有更新源。Gatekeeper 不会把临时签名视为已公证的分发签名；若要分发给其他 Mac 并正常打开，仍需使用上文的 Developer ID 与公证流程。
+
 需要检查或诊断为宿主目标准备的资源而不调用 electron-builder 时，可以让同一流水线在准备完成后停止：
 
 ```sh

@@ -386,6 +386,8 @@ pnpm run package:desktop:dir
 pnpm run package:desktop:mac:arm64:dir
 ```
 
+For a self-contained build used on the Mac that creates it, run `pnpm run package:desktop:mac:arm64:local --build-version <confirmed-version>`. It builds the same runtime, signs native files and the App ad hoc, runs the packaged-runtime smoke, and writes `DeepSeek Harness Local.app` plus a ZIP under `apps/desktop/.desktop-build/targets/mac-arm64/local-artifacts/`. The local application has a separate app ID and no update feed. Gatekeeper does not accept its ad hoc signature as a notarized distribution signature; distributing an app that opens normally on other Macs requires the Developer ID and notarization workflow above.
+
 To inspect or troubleshoot the prepared host-target resources without invoking electron-builder, stop the same pipeline after preparation:
 
 ```sh

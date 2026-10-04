@@ -47,6 +47,7 @@ export function desktopTargetBuildPaths(target) {
   return {
     root,
     artifacts: join(root, 'artifacts'),
+    localArtifacts: join(root, 'local-artifacts'),
     unsignedArtifacts: join(root, 'unsigned-artifacts'),
     runtime: join(root, 'runtime'),
     packageSet: join(root, 'package-set'),
