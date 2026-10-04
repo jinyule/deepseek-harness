@@ -19,7 +19,8 @@ const unusedHook = (() => { throw new Error('unused standard hook') }) as never
 const standardProps: GlobalStandardProps = {
   usePanelInfo: selector => selector({ activePanelId: null }),
   useSessions: unusedHook,
-  useSessionPendingInteraction: unusedHook,
+  useSessionStatus: unusedHook,
+  useSessionRetainInfo: unusedHook,
   useWorkspaces: unusedHook,
   useResource: unusedHook,
 }

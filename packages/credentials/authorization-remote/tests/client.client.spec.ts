@@ -15,7 +15,17 @@ function harness(result: (endpoint: string) => RpcResult<unknown>): {
 } {
   const ctx = new Context()
   const call = vi.fn(async (_channel: string, endpoint: string) => result(endpoint))
-  ctx.provide('connection', { rpc: { call } } as unknown as ConnectionHandle)
+  const unused = (): never => { throw new Error('unexpected Connection operation') }
+  const connection: ConnectionHandle = {
+    rpc: { call },
+    isLoopback: true,
+    generation: { getSnapshot: unused, subscribe: unused },
+    state: { getSnapshot: unused, subscribe: unused },
+    reconnect: unused,
+    registerGenerationSource: unused,
+    start: unused,
+  }
+  ctx.provide('connection', connection)
   apply(ctx)
   return { ctx, call }
 }

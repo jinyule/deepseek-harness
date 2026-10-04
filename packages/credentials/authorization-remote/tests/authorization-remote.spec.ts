@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { AuthorizationInteraction, AuthorizationOutcome } from '@deepseek-ai/dsh-authorization'
 import { credentialKey, type CredentialKey } from '@deepseek-ai/dsh-credentials'
-import type { ConnectionRpcHandler, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import { OperatorPeer, type ConnectionRpcHandler, type HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AuthorizationRemoteService, { type Config } from '../src/index.ts'
 import type {
@@ -25,6 +25,7 @@ interface Harness {
   readonly service: AuthorizationRemoteService
   readonly call: ConnectionRpcHandler
   readonly channel: string
+  readonly peer: OperatorPeer
   readonly credentials: {
     describeRecord: ReturnType<typeof vi.fn>
     deleteRecord: ReturnType<typeof vi.fn>
@@ -80,7 +81,9 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
   } as never)
   let call: ConnectionRpcHandler | undefined
   let channel: string | undefined
-  const connection = {
+  const peer = new OperatorPeer(ctx)
+  const unused = (): never => { throw new Error('unexpected Connection operation') }
+  const connection: HostConnectionHandle = {
     rpc: {
       handle: (registeredChannel: string, handler: ConnectionRpcHandler) => {
         call = handler
@@ -89,7 +92,14 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
       },
       intercept: () => async () => {},
     },
-  } as unknown as HostConnectionHandle
+    fetch: { register: unused },
+    operator: peer,
+    createSharedFetchHandler: unused,
+    requestRejection: unused,
+    admit: unused,
+    authorizeIndex: unused,
+    authenticatedUrl: unused,
+  }
   ctx.provide('connection', connection)
   ctx.provide('webServer', {} as never)
   const fiber = ctx.plugin(AuthorizationRemoteService, CONFIG)
@@ -100,6 +110,7 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
     service: ctx.authorizationRemote,
     call: call!,
     channel: channel!,
+    peer,
     credentials,
   }
 }
@@ -121,15 +132,15 @@ describe('authenticated authorization RPC', () => {
     const app = await harness()
     expect(app.channel).toBe('/authorization')
 
-    await expect(app.call('missing', {}, new AbortController().signal)).resolves.toMatchObject({
+    await expect(app.call('missing', {}, new AbortController().signal, app.peer)).resolves.toMatchObject({
       ok: false,
       error: { code: 'bad-request', message: 'Invalid authorization request.' },
     })
-    await expect(app.call('list', { extra: true }, new AbortController().signal)).resolves.toMatchObject({
+    await expect(app.call('list', { extra: true }, new AbortController().signal, app.peer)).resolves.toMatchObject({
       ok: false,
       error: { code: 'bad-request' },
     })
-    await expect(app.call('list', {}, new AbortController().signal)).resolves.toEqual({
+    await expect(app.call('list', {}, new AbortController().signal, app.peer)).resolves.toEqual({
       ok: true,
       value: {
         entries: [{
@@ -143,7 +154,7 @@ describe('authenticated authorization RPC', () => {
     })
     expect(app.credentials.describeRecord).toHaveBeenCalledWith(KEY)
 
-    const started = await app.call('start', { key: KEY }, new AbortController().signal)
+    const started = await app.call('start', { key: KEY }, new AbortController().signal, app.peer)
     expect(started).toMatchObject({ ok: true, value: { ok: true } })
     if (!started.ok || typeof started.value !== 'object' || started.value === null) throw new Error('expected start')
     const startValue = started.value as { ok: true; value: { attemptId: AuthorizationAttemptId } }
@@ -151,20 +162,20 @@ describe('authenticated authorization RPC', () => {
       attemptId: startValue.value.attemptId,
       promptId: '00000000-0000-4000-8000-000000000001',
       value: 'x',
-    }, new AbortController().signal)).resolves.toMatchObject({
+    }, new AbortController().signal, app.peer)).resolves.toMatchObject({
       ok: true, value: { ok: false, error: { code: 'prompt-not-found' } },
     })
     await expect(app.call('cancel', {
       attemptId: startValue.value.attemptId,
-    }, new AbortController().signal)).resolves.toMatchObject({ ok: true })
-    await expect(app.call('forget', { key: KEY }, new AbortController().signal)).resolves.toMatchObject({ ok: true })
+    }, new AbortController().signal, app.peer)).resolves.toMatchObject({ ok: true })
+    await expect(app.call('forget', { key: KEY }, new AbortController().signal, app.peer)).resolves.toMatchObject({ ok: true })
   })
 
   it('contains handler failures and reports caller cancellation without logging supplied values', async () => {
     const app = await harness()
     app.credentials.describeRecord.mockRejectedValueOnce(new Error('store-secret'))
     const warn = vi.spyOn(app.ctx.logger, 'warn').mockImplementation(() => app.ctx.logger)
-    await expect(app.call('list', {}, new AbortController().signal)).resolves.toEqual({
+    await expect(app.call('list', {}, new AbortController().signal, app.peer)).resolves.toEqual({
       ok: false,
       error: { code: 'internal', message: 'Authorization request failed.', details: {} },
     })
@@ -173,7 +184,7 @@ describe('authenticated authorization RPC', () => {
     const attemptId = attemptOf(app.service.start({ key: KEY }))
     const controller = new AbortController()
     controller.abort()
-    await expect(app.call('poll', { attemptId }, controller.signal)).resolves.toEqual({
+    await expect(app.call('poll', { attemptId }, controller.signal, app.peer)).resolves.toEqual({
       ok: false,
       error: { code: 'cancelled', message: 'Authorization request was cancelled.', details: {} },
     })

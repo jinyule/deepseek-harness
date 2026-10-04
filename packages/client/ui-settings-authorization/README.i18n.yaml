@@ -1,6 +1,43 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/ui-settings-authorization/README.md
-README.md: 746f3be03e5bd90e0a7526b400becb7eb8730265
-README.zh.md: 2506ccaf06f154e4cfe509c5fd4cc43c03a5de00
+/:
+  en: 713f2f64af0d5e07
+  zh: e40738174f13a533
+/deepseek-ai-dsh-client-ui-settings-authorization:
+  en: 5d0af439140fc2a2
+  zh: ff8b44ad2c1a55f0
+/deepseek-ai-dsh-client-ui-settings-authorization/summary:
+  en: 8d1a6a43785da296
+  zh: b931119fefd66ee0
+/deepseek-ai-dsh-client-ui-settings-authorization/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 5f159937b427dace
+/deepseek-ai-dsh-client-ui-settings-authorization/use-this-package:
+  en: 53e8822d46dc8438
+  zh: 2ffb2c70aef59956
+/deepseek-ai-dsh-client-ui-settings-authorization/use-this-package/when-to-choose-it:
+  en: bad2857c2841e82f
+  zh: c2e38c33b0a78f43
+/deepseek-ai-dsh-client-ui-settings-authorization/use-this-package/minimal-configuration:
+  en: 7059e329018089e8
+  zh: 1a6604a3e1120dbf
+/deepseek-ai-dsh-client-ui-settings-authorization/understand-the-implementation:
+  en: 877df5d22843d0e1
+  zh: f1bd59d3564786f4
+/deepseek-ai-dsh-client-ui-settings-authorization/further-exploration:
+  en: 0d937a341ae7438b
+  zh: 4ccb28c967b7a1e9
+/deepseek-ai-dsh-client-ui-settings-authorization/model-experience:
+  en: 3dbc44b9cf6fe8f2
+  zh: ddee94ef4d409eb9
+/deepseek-ai-dsh-client-ui-settings-authorization/model-experience/kv-cache-effect:
+  en: ca75c51c89c2c9b0
+  zh: 3fd9a482746d0023
+/deepseek-ai-dsh-client-ui-settings-authorization/known-limitations-and-deferred-work:
+  en: f5ae6072a04d049d
+  zh: c340a735c87567da
+/deepseek-ai-dsh-client-ui-settings-authorization/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: e88aeb617ffb74ea

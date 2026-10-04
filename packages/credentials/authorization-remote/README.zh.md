@@ -62,7 +62,7 @@ Connection 使用 Host、Origin 和签名浏览器会话检查认证私有 `/aut
 | 文件 | 作用 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Host 服务、尝试生命周期和通道分派 |
-| [`src/api.ts`](src/api.ts) | 通道名称和严格端点编解码器 |
+| [`src/api.ts`](src/api.ts) | 通道名称、严格端点编解码器和校验后的标识符品牌类型标记 |
 | [`src/types.ts`](src/types.ts) | 不含值的浏览器协议类型 |
 | [`src/client/index.ts`](src/client/index.ts) | 浏览器服务与严格通道调用方 |
 | — | 不发布运行时不变量伴生插件；一个服务表拥有尝试、轮询和问题，行为测试验证它们的关系。 |

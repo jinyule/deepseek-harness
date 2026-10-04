@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod'
+import type { CredentialKey } from '@deepseek-ai/dsh-credentials'
 import type {
   AuthorizationAccountList,
   AuthorizationActionResult,
@@ -38,8 +39,9 @@ export interface AuthorizationRpcMap {
 }
 
 const credentialKeySchema = z.string().regex(/^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/)
-const attemptIdSchema = z.uuid() as unknown as z.ZodType<AuthorizationAttemptId>
-const promptIdSchema = z.uuid() as unknown as z.ZodType<AuthorizationPromptId>
+  .transform(value => value as CredentialKey)
+const attemptIdSchema = z.uuid().transform(value => value as AuthorizationAttemptId)
+const promptIdSchema = z.uuid().transform(value => value as AuthorizationPromptId)
 
 const remoteFailureSchema = z.object({
   code: z.enum([
@@ -80,7 +82,7 @@ const promptSchema = z.discriminatedUnion('kind', [
       description: z.string().optional(),
     }).strict()),
   }).strict(),
-]) as unknown as z.ZodType<AuthorizationPromptView>
+]) as z.ZodType<AuthorizationPromptView>
 
 const eventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }).strict(),
@@ -95,7 +97,7 @@ const eventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('prompt-withdrawn'), promptId: promptIdSchema }).strict(),
   z.object({ kind: z.literal('settled'), status: z.enum(['authorized', 'cancelled']) }).strict(),
   z.object({ kind: z.literal('failed'), message: z.string() }).strict(),
-]) as unknown as z.ZodType<AuthorizationAttemptEvent>
+]) as z.ZodType<AuthorizationAttemptEvent>
 
 const actionResultSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true), value: z.object({ accepted: z.literal(true) }).strict() }).strict(),
@@ -110,7 +112,7 @@ export const authorizationRequestSchemas: {
   start: z.object({
     key: credentialKeySchema,
     method: z.string().min(1).optional(),
-  }).strict() as unknown as z.ZodType<AuthorizationStartRequest>,
+  }).strict() as z.ZodType<AuthorizationStartRequest>,
   poll: z.object({ attemptId: attemptIdSchema }).strict(),
   answer: z.object({
     attemptId: attemptIdSchema,
@@ -118,7 +120,7 @@ export const authorizationRequestSchemas: {
     value: z.string(),
   }).strict(),
   cancel: z.object({ attemptId: attemptIdSchema }).strict(),
-  forget: z.object({ key: credentialKeySchema }).strict() as unknown as z.ZodType<AuthorizationForgetRequest>,
+  forget: z.object({ key: credentialKeySchema }).strict(),
 }
 
 /** Strict business-value schemas keyed by channel endpoint. */
@@ -137,7 +139,7 @@ export const authorizationValueSchemas: {
         writable: z.boolean(),
       }).strict(),
     }).strict()),
-  }).strict() as unknown as z.ZodType<AuthorizationAccountList>,
+  }).strict() as z.ZodType<AuthorizationAccountList>,
   start: z.discriminatedUnion('ok', [
     z.object({ ok: z.literal(true), value: z.object({ attemptId: attemptIdSchema }).strict() }).strict(),
     z.object({ ok: z.literal(false), error: remoteFailureSchema }).strict(),

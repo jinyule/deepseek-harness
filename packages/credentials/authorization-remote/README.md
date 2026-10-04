@@ -62,7 +62,7 @@ Connection authenticates the private `/authorization` channel with its Host, Ori
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Host service, attempt lifecycle, and channel dispatch |
-| [`src/api.ts`](src/api.ts) | Channel name and strict endpoint codecs |
+| [`src/api.ts`](src/api.ts) | Channel name, strict endpoint codecs, and validated identifier branding |
 | [`src/types.ts`](src/types.ts) | Value-free browser protocol types |
 | [`src/client/index.ts`](src/client/index.ts) | Browser service and strict channel caller |
 | — | No runtime invariant companion is published; one service table owns attempts, polls, and prompts, and behavior tests exercise their relationships. |

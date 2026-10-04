@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-08-23-web-authorization-plugins.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-23-web-authorization-plugins.md
-2026-08-23-web-authorization-plugins.md: 4455bb5d3d6a0f4f2daa86cbbb7f2b85bbe67128
-2026-08-23-web-authorization-plugins.zh.md: 143eae1dab0cb70e71592e463ec0f02fb6ac0330
+/agent-note-web-authorization-plugins:
+  en: c927e1af5b0e5e4a
+  zh: 6be34cb02c016269
+/agent-note-web-authorization-plugins/problem:
+  en: 70e9e45e184d884b
+  zh: 6c5ee9e3d9cde34d
+/agent-note-web-authorization-plugins/decision:
+  en: 0c4faeb1431abded
+  zh: 4df07fc4be7d2bfd
+/agent-note-web-authorization-plugins/alternatives-considered:
+  en: 53e4be87b65cbf6a
+  zh: 78622df588a4ab6c
+/agent-note-web-authorization-plugins/consequences:
+  en: cee17d185a642ed1
+  zh: 11a25cac3823aa28
+/agent-note-web-authorization-plugins/testing:
+  en: e7ed76bda201cb89
+  zh: c57208b4c049afd8

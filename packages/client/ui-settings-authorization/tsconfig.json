@@ -10,8 +10,8 @@
     { "path": "../ui-slots" },
     { "path": "../store" },
     { "path": "../ui-primitives" },
-    { "path": "../ui-settings" },
-    { "path": "../locale" },
+    { "path": "../ui-settings/tsconfig.client.json" },
+    { "path": "../locale/tsconfig.client.json" },
     { "path": "../../credentials/credentials" },
     { "path": "../../credentials/authorization-remote/tsconfig.client.json" }
   ]
