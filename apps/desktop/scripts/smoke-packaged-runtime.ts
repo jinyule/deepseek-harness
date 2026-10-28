@@ -1,21 +1,20 @@
 /** Validate the assembled application, including native Office conversion outside ASAR. */
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
-import { resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+import { desktopArtifactOutput, resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 import { readDesktopRuntime, verifyDesktopRuntime } from '../src/runtime-tree.ts'
 import { verifyWindowsCode } from './windows-runtime-signature.mjs'
 import { smokePreparedRuntime } from './smoke-prepared-runtime.ts'
 import { resolveDesktopPackageTarget } from './package-target.ts'
 
 const paths = resolveDesktopTargetBuildPaths()
-const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default: false } }, allowPositionals: false })
+const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default: false }, 'skip-notarization': { type: 'boolean', default: false } }, allowPositionals: false })
 const target = resolveDesktopBuildTarget()
 const windows = target === 'win-x64'
 const local = process.env.DSH_DESKTOP_LOCAL_PACKAGE === '1'
-if (values.unsigned && !windows) throw new Error('desktop smoke: unsigned artifacts require Windows')
-if (local && (windows || values.unsigned)) throw new Error('desktop smoke: local artifacts require macOS')
-const artifacts = local ? paths.localArtifacts : values.unsigned ? paths.unsignedArtifacts : paths.artifacts
+if (local && (windows || values.unsigned || values['skip-notarization'])) throw new Error('desktop smoke: local artifacts require macOS without other signing modes')
 const productName = local ? 'DeepSeek Harness Local' : 'DeepSeek Harness'
+const artifacts = desktopArtifactOutput(paths, { unsigned: values.unsigned, skipNotarization: values['skip-notarization'], local }).directory
 const application = windows ? join(artifacts, 'win-unpacked')
   : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', `${productName}.app`, 'Contents')
 const resources = join(application, windows ? 'resources' : 'Resources')

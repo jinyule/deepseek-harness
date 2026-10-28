@@ -7,11 +7,11 @@
  * event ledger with its timing overview, and fiber disposal removes the tab.
  * Timeline projection and inclusive focus edge cases ride along.
  */
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { createElement, type ComponentProps, type FC, type ReactNode } from 'react'
-import { bindSnapshotSelector, SlotTestRuntime, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
+import { allowAllAccess, bindSnapshotSelector, SlotTestRuntime, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   EMPTY_CONVERSATION_SNAPSHOT, UiConversation,
@@ -41,7 +41,6 @@ import { createConversationStore } from '@deepseek-ai/dsh-client-ui-conversation
 import { zh as conversationZh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
 import * as localePlugin from '@deepseek-ai/dsh-client-locale/client'
 import { apply, inject } from '@deepseek-ai/dsh-client-ui-trajectory/client'
-import { apply as nodeApply } from '@deepseek-ai/dsh-client-ui-trajectory'
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import type { TrajectoryTurnModel } from '../src/client/layout.ts'
 import { TrajectoryTimeline as LocalizedTrajectoryTimeline } from '../src/client/TrajectoryTimeline.tsx'
@@ -216,6 +215,7 @@ function standaloneProps(
     draft: '', attachmentIds: [], draftRev: 0, phase: 'plain', occurrences: [], queue: [],
   })
   const inputActions: InputActions = {
+    insertQuote: () => false,
     captureInsertion: () => ({ start: 0, end: 0, draftRev: 0 }),
     insertText: () => false,
     setDraft: () => {},
@@ -235,6 +235,7 @@ function standaloneProps(
     ),
     useSessionRetainInfo: () => undefined,
     useWorkspaces: emptyWorkspaces(),
+    ...allowAllAccess,
     useConversation: bindSnapshotSelector(createSnapshotStore(conversationSnapshot(trajectory))),
     useInput: bindSnapshotSelector(input),
     inputActions,
@@ -245,7 +246,6 @@ function standaloneProps(
     completeViewRequest: () => {},
     // Image seats the outlet would bake: standalone renders omit the gallery.
     renderSlot: () => null,
-    SessionProvider: ({ children }) => <>{children}</>,
     loadImage: () => Promise.reject(new Error('standalone views load no images')),
     // The locale seat the outlet would inject for the declared namespace.
     t: tZh,
@@ -260,6 +260,7 @@ type ConversationTargetSources = {
 /** Real-stack bench: root Context + real SlotRegistry ring + the plugin fiber. */
 async function bench(snapshot = historySnapshot(NODES)) {
   const runtime = await SlotTestRuntime.create()
+  runtime.remote.provideNamespaces({ toolResults: {} })
   runtimes.push(runtime)
   const ctx = runtime.ctx
   const slots = runtime.slots
@@ -275,7 +276,9 @@ async function bench(snapshot = historySnapshot(NODES)) {
   const conversationStore = createSnapshotStore<ConversationSnapshot>(conversationSnapshot(snapshot))
   const uiConversation = new UiConversation(ctx, runtime.sessions)
   const { events, views } = uiConversation
-  const targetSources: ConversationTargetSources = {
+  // Only the targets this trajectory bench binds; a typed lookup keeps the map
+  // non-exhaustive so other packages' targets need no dependency here.
+  const targetSources: Partial<ConversationTargetSources> = {
     chat: createSnapshotStore<ChatSnapshot | undefined>(undefined),
     trajectory: trajectoryStore,
     'tool-todo-history': createSnapshotStore<ConversationViewSnapshotMap['tool-todo-history'] | undefined>(undefined),
@@ -284,7 +287,11 @@ async function bench(snapshot = historySnapshot(NODES)) {
     snapshot: conversationStore,
     openTurn: createSnapshotStore<number | undefined>(undefined),
     activate: () => {},
-    target: target => targetSources[target],
+    target: (target) => {
+      const source = targetSources[target]
+      if (source === undefined) throw new Error(`trajectory bench has no source for target "${target}"`)
+      return source
+    },
   }
   vi.spyOn(uiConversation, 'binding').mockReturnValue(binding)
   // The conversation entry's role: declare the ring, then seed the chat entry.
@@ -345,6 +352,7 @@ function mount(fixture: Awaited<ReturnType<typeof bench>>) {
     draft: '', attachmentIds: [], draftRev: 0, phase: 'plain', occurrences: [], queue: [],
   }))
   const inputActions: InputActions = {
+    insertQuote: () => false,
     captureInsertion: () => ({ start: 0, end: 0, draftRev: 0 }),
     insertText: () => false,
     setDraft: vi.fn(),
@@ -366,6 +374,7 @@ function mount(fixture: Awaited<ReturnType<typeof bench>>) {
     useSessionStatus,
     useSessionRetainInfo: () => undefined,
     useWorkspaces,
+    ...allowAllAccess,
     useProjection,
     useInput,
     inputActions,
@@ -387,13 +396,16 @@ function mount(fixture: Awaited<ReturnType<typeof bench>>) {
         const trajectory = injected as TrajectoryViewInjected
         return {
           loadOlder: trajectory.loadOlder,
+          loadImage: trajectory.loadImage,
           setActualDuration: trajectory.setActualDuration,
           useDuration: bindSnapshotSelector(trajectory.hooks.duration),
           t: tZh,
         }
       })()
       : injected
-    const viewProps: ConvViewProps = { ...owner, ...standardProps }
+    const viewProps: ConvViewProps & Pick<PropsRenderSlots<'conversation.trajectory.images'>, 'renderSlot'> = {
+      ...owner, ...standardProps, renderSlot: () => null,
+    }
     return (
       <View
         {...viewProps}
@@ -406,6 +418,9 @@ function mount(fixture: Awaited<ReturnType<typeof bench>>) {
     <>
       <ConversationSessionHeader
         hideChrome={false}
+        useEntryPins={selector => selector([])}
+        useEntryActions={selector => selector(false)}
+        setPinned={vi.fn()}
         {...standardProps}
         SessionProvider={({ children }) => children}
         useStore={bindSnapshotSelector(conversation)}
@@ -595,6 +610,37 @@ describe('tab switching in ConversationRoot', () => {
     fireEvent.click(screen.getByRole('button', { name: '请求 #2 · 压缩' }))
     expect(screen.getByText('压缩 · 轮次之间')).toBeTruthy()
     expect(view.container.textContent).not.toContain('Turn null')
+  })
+
+  it('reports a streaming Assistant record and a running compaction as pending', async () => {
+    const nodes: LegacyConversationSlice['nodes'] = [
+      { kind: 'user', seq: 1, time: 1_000, content: [], source: null },
+    ]
+    const requests: RequestView[] = [
+      {
+        purpose: 'assistant', startSeq: 2, turn: 1, step: 1,
+        startedAt: 2_000, completedAt: null, status: 'running',
+      },
+      {
+        purpose: 'compaction', startSeq: 3, turn: 1, step: 0,
+        startedAt: 3_000, completedAt: null, status: 'running',
+      },
+    ]
+    const b = await bench(historySnapshot(nodes, {
+      requests,
+      partial: { turn: 1, step: 1, blocks: [{ kind: 'text', text: 'still streaming' }] },
+    }))
+    mount(b)
+    fireEvent.click(screen.getByRole('tab', { name: 'Trajectory' }))
+    const detail = () => screen.getByRole('complementary', { name: '事件详情' })
+
+    fireEvent.click(screen.getByRole('row', { name: /still streaming/ }))
+    expect(within(detail()).getByText('等待中')).toBeTruthy()
+    expect(within(detail()).queryByText('已完成')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '请求 #2 · 压缩' }))
+    expect(within(detail()).getByText('等待中')).toBeTruthy()
+    expect(within(detail()).queryByText('已压缩')).toBeNull()
   })
 
   it('activates only the selected standalone compaction section', async () => {
@@ -811,7 +857,7 @@ describe('timeline projection', () => {
       expect(span?.getAttribute('data-assistant-timing')).toBe('true')
       expect(span?.style.getPropertyValue('--trajectory-assistant-ttft')).toBe('25%')
 
-      fireEvent.mouseEnter(span as HTMLElement)
+      fireEvent.pointerEnter(span as HTMLElement)
       act(() => { vi.advanceTimersByTime(499) })
       expect(view.container.querySelector('[role="tooltip"]')).toBeNull()
       act(() => { vi.advanceTimersByTime(1) })
@@ -1293,6 +1339,28 @@ describe('timeline projection', () => {
 })
 
 describe('TrajectoryView state', () => {
+  it.each([
+    { interrupted: true, status: '失败' },
+    { interrupted: false, status: '已完成' },
+  ])('uses the settled response status when the Step start is unloaded: $status', ({ interrupted, status }) => {
+    const nodes: LegacyConversationSlice['nodes'] = [{
+      kind: 'assistant', seq: 10, time: 10_000, turn: 2, step: 3,
+      blocks: [{ kind: 'text', text: 'loaded response' }],
+      ...(interrupted ? { interrupted: true } : {}),
+    }]
+    render(<TrajectoryView
+      {...standaloneProps(nodes)}
+      {...standaloneHistory(historySnapshot(nodes))}
+      {...standaloneDuration()}
+    />)
+    fireEvent.click(screen.getByRole('row', { name: /loaded response/ }))
+    expect(within(screen.getByRole('tabpanel')).getByText(status)).toBeTruthy()
+    fireEvent.click(within(screen.getByRole('table')).getByRole('button', { name: '请求 #1' }))
+    expect(within(screen.getByRole('tabpanel')).getByText(status)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '助手消息' }))
+    expect(within(screen.getByRole('tabpanel')).getByText(status)).toBeTruthy()
+  })
+
   it('reveals resident history one bounded page at a time', async () => {
     const nodes: LegacyConversationSlice['nodes'] = Array.from({ length: 5_000 }, (_, index) => ({
       kind: 'user' as const,
@@ -1479,6 +1547,7 @@ describe('TrajectoryView state', () => {
     const first = render(
       <TrajectoryView
         {...commonProps}
+        {...standaloneDuration()}
         useDuration={bindSnapshotSelector(firstDuration)}
         setActualDuration={(value) => { firstDuration.set(value) }}
       />,
@@ -1494,6 +1563,7 @@ describe('TrajectoryView state', () => {
     render(
       <TrajectoryView
         {...commonProps}
+        {...standaloneDuration()}
         useDuration={bindSnapshotSelector(restoredDuration)}
         setActualDuration={(value) => { restoredDuration.set(value) }}
       />,
@@ -1535,10 +1605,4 @@ describe('TrajectoryView state', () => {
     )).toBeTruthy()
   })
 
-})
-
-describe('node half', () => {
-  it('node apply is an intentional no-op (loader-managed lifecycle only)', () => {
-    expect(() => { nodeApply() }).not.toThrow()
-  })
 })

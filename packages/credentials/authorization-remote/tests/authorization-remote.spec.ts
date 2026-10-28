@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { AuthorizationInteraction, AuthorizationOutcome } from '@deepseek-ai/dsh-authorization'
 import { credentialKey, type CredentialKey } from '@deepseek-ai/dsh-credentials'
-import { OperatorPeer, type ConnectionRpcHandler, type HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
+import { Peer, type ConnectionRpcHandler, type HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AuthorizationRemoteService, { type Config } from '../src/index.ts'
 import type {
@@ -9,6 +9,12 @@ import type {
   AuthorizationPollResult,
   AuthorizationStartResult,
 } from '../src/types.ts'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface PrincipalMap {
+    'authorization-test-reader': { readonly kind: 'authorization-test-reader' }
+  }
+}
 
 const KEY = credentialKey('llm-pi-ai', 'openai-codex')
 const OTHER = credentialKey('llm-pi-ai', 'anthropic')
@@ -25,7 +31,7 @@ interface Harness {
   readonly service: AuthorizationRemoteService
   readonly call: ConnectionRpcHandler
   readonly channel: string
-  readonly peer: OperatorPeer
+  readonly peer: Peer
   readonly credentials: {
     describeRecord: ReturnType<typeof vi.fn>
     deleteRecord: ReturnType<typeof vi.fn>
@@ -81,7 +87,7 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
   } as never)
   let call: ConnectionRpcHandler | undefined
   let channel: string | undefined
-  const peer = new OperatorPeer(ctx)
+  const peer = new Peer(ctx, { principal: { kind: 'owner' } })
   const unused = (): never => { throw new Error('unexpected Connection operation') }
   const connection: HostConnectionHandle = {
     rpc: {
@@ -93,7 +99,10 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
       intercept: () => async () => {},
     },
     fetch: { register: unused },
-    operator: peer,
+    browserPeer: peer,
+    allowsRemoteAuthorities: false,
+    createPeer: unused,
+    admitConnection: unused,
     createSharedFetchHandler: unused,
     requestRejection: unused,
     admit: unused,
@@ -128,6 +137,24 @@ function eventOf(result: AuthorizationPollResult): Extract<AuthorizationPollResu
 }
 
 describe('authenticated authorization RPC', () => {
+  it.each(['list', 'start', 'poll', 'answer', 'cancel', 'forget'])('refuses %s for a non-owner Peer before reading or changing credentials', async (endpoint) => {
+    const app = await harness()
+    const reader = new Peer(app.ctx, { principal: { kind: 'authorization-test-reader' } })
+    const requests: Record<string, object> = {
+      list: {},
+      start: { key: KEY },
+      poll: { attemptId: '00000000-0000-4000-8000-000000000001' },
+      answer: { attemptId: '00000000-0000-4000-8000-000000000001', promptId: '00000000-0000-4000-8000-000000000002', value: 'answer' },
+      cancel: { attemptId: '00000000-0000-4000-8000-000000000001' },
+      forget: { key: KEY },
+    }
+    await expect(app.call(endpoint, requests[endpoint], new AbortController().signal, reader)).resolves.toMatchObject({
+      ok: false, error: { code: 'forbidden' },
+    })
+    expect(app.credentials.describeRecord).not.toHaveBeenCalled()
+    expect(app.credentials.deleteRecord).not.toHaveBeenCalled()
+  })
+
   it('registers its private channel, validates requests, and returns only credential metadata', async () => {
     const app = await harness()
     expect(app.channel).toBe('/authorization')

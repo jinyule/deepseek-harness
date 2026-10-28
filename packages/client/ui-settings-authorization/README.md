@@ -52,7 +52,7 @@ The resulting Accounts section renders every registered flow. Removing a record 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The plugin registers localized copy and one `settings.section` slot. Its controller owns a single observable snapshot, long-polls only attempts started by the page, reloads account state after settlement, and aborts and awaits active polls during teardown. The component renders only the generic authorization vocabulary; it contains no OpenAI, Codex, OAuth, or pi-ai-specific condition.
+The plugin registers localized copy and one `settings.section` slot. Account discovery preserves live attempt updates, and only the newest discovery request updates account metadata. An answer acknowledgment clears only its original attempt's original prompt. Plugin unload closes start admission, awaits pending starts and their required cancellations, and drains polls and existing cancellations before reporting cleanup failures. Localized copy remains registered until cleanup finishes. The component renders only the generic authorization vocabulary; it contains no OpenAI, Codex, OAuth, or pi-ai-specific condition.
 
 | File | Role |
 |---|---|
@@ -90,7 +90,7 @@ None; this package neither assembles nor sends a provider request.
 
 These limits define the UI's attempt and removal behavior.
 
-- **Current-process attempts only** — page teardown or orphan timeout requires a new sign-in attempt.
+- **Current-process attempts only** — a closed browser cannot await RPC cleanup; failed cancellations can leave the Host attempt active until its orphan timeout.
 - **No issuer revocation** — the removal action forgets only the local credential record.
 
 <a id="dev-note"></a>

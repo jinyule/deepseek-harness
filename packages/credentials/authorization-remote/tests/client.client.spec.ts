@@ -19,6 +19,8 @@ function harness(result: (endpoint: string) => RpcResult<unknown>): {
   const connection: ConnectionHandle = {
     rpc: { call },
     isLoopback: true,
+    interactions: 'answer',
+    openWebSocket: unused,
     generation: { getSnapshot: unused, subscribe: unused },
     state: { getSnapshot: unused, subscribe: unused },
     reconnect: unused,

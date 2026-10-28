@@ -289,7 +289,7 @@ describe('AuthorizationSettingsStore', () => {
       cancel: vi.fn(async () => { throw new Error('ignored during disposal') }),
     }))
     await cancelling.start(KEY)
-    await cancelling.dispose()
+    await expect(cancelling.dispose()).rejects.toBeInstanceOf(AggregateError)
 
     const internals = settingsStore(remote())
     const applyEvent = Reflect.get(internals, 'applyEvent') as (key: typeof KEY, event: object) => boolean

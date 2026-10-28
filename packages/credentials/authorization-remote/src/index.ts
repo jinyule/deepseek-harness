@@ -350,7 +350,10 @@ export class AuthorizationRemoteService extends Service {
   }
 
   /** Validate and dispatch one request from the authenticated Connection channel. */
-  private readonly dispatch: ConnectionRpcHandler = async (endpoint, payload, signal) => {
+  private readonly dispatch: ConnectionRpcHandler = async (endpoint, payload, signal, peer) => {
+    if (peer.principal.kind !== 'owner') {
+      return { ok: false, error: { code: 'forbidden', message: 'Only the Host owner may manage provider accounts.', details: {} } }
+    }
     if (!isAuthorizationEndpoint(endpoint)) return badRequest()
     const parsed = authorizationRequestSchemas[endpoint].safeParse(payload)
     if (!parsed.success) return badRequest()

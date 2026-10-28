@@ -95,7 +95,7 @@ None; this package neither assembles nor sends a provider request.
 
 These limits define the lifetime and authority of the browser interaction.
 
-- **Authenticated browsers only** — Connection rejects requests without a valid browser session or with a disallowed Host or Origin.
+- **Host owner only** — Connection validates the session, Host and Origin. The channel refuses every non-owner Peer before reading account metadata or changing credentials.
 - **Attempts are not durable** — losing the owning page beyond the orphan timeout requires a new attempt.
 - **Forgetting is not revocation** — removing a local record does not notify its issuer.
 

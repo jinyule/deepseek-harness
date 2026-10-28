@@ -53,7 +53,11 @@ export class AuthorizationSettingsStore {
   readonly store: SnapshotStore<AuthorizationSettingsState> = createSnapshotStore(INITIAL)
   private readonly polls = new Map<AuthorizationAttemptId, AbortController>()
   private readonly pumps = new Map<AuthorizationAttemptId, Promise<void>>()
+  private readonly starts = new Set<Promise<AuthorizationUiActionResult>>()
+  private readonly cancellations = new Map<AuthorizationAttemptId, Promise<AuthorizationUiActionResult>>()
+  private loadRevision = 0
   private disposed = false
+  private disposal: Promise<void> | undefined
 
   /**
    * @param remote - authorization client service supplied by the transport plugin.
@@ -65,57 +69,75 @@ export class AuthorizationSettingsStore {
   ) {}
 
   /**
-   * Read all registered flows and their current credential state.
+   * Read registered flows without replacing live attempt updates; only the newest read publishes metadata.
    * @returns whether the value-free snapshot was loaded.
    */
   async load(): Promise<AuthorizationUiActionResult> {
     if (this.isDisposed()) return { ok: false, message: this.t('unavailable') }
+    const revision = ++this.loadRevision
     const current = this.store.getSnapshot()
     this.store.set({ status: 'loading', entries: current.entries, attempts: current.attempts })
     try {
       const response = await this.remote.list()
       if (!response.ok) {
-        this.store.set({ status: 'error', entries: current.entries, attempts: current.attempts, error: response.error.message })
+        if (!this.isDisposed() && revision === this.loadRevision) {
+          this.store.set({ ...this.store.getSnapshot(), status: 'error', error: response.error.message })
+        }
         return failure(response)
       }
-      if (this.isDisposed()) return ACTION_OK
-      this.store.set({ status: 'ready', entries: response.value.entries, attempts: current.attempts })
+      if (this.isDisposed() || revision !== this.loadRevision) return ACTION_OK
+      this.store.set({ status: 'ready', entries: response.value.entries, attempts: this.store.getSnapshot().attempts })
       return ACTION_OK
     } catch (error) {
       const message = error instanceof Error ? error.message : this.t('loadFailed')
-      if (!this.isDisposed()) {
-        this.store.set({ status: 'error', entries: current.entries, attempts: current.attempts, error: message })
+      if (!this.isDisposed() && revision === this.loadRevision) {
+        this.store.set({ ...this.store.getSnapshot(), status: 'error', error: message })
       }
       return { ok: false, message }
     }
   }
 
   /**
-   * Start one flow and begin consuming its private event queue.
+   * Start one flow and consume its private event queue; teardown rejects new starts and drains accepted ones.
    * @param key - credential record owned by the flow.
    * @param method - optional method declared by that flow.
    * @returns whether the attempt was admitted.
    */
-  async start(key: CredentialKey, method?: string): Promise<AuthorizationUiActionResult> {
+  start(key: CredentialKey, method?: string): Promise<AuthorizationUiActionResult> {
+    if (this.disposed) return Promise.resolve({ ok: false, message: this.t('unavailable') })
+    const pending = Promise.withResolvers<AuthorizationUiActionResult>()
+    this.starts.add(pending.promise)
+    void this.startAttempt(key, method).then(pending.resolve, pending.reject)
+    void pending.promise.then(() => { this.starts.delete(pending.promise) }, () => { this.starts.delete(pending.promise) })
+    return pending.promise.catch(() => ({ ok: false, message: this.t('cancelFailed') }))
+  }
+
+  /** Register an admitted attempt, or cancel it before teardown releases the client. */
+  private async startAttempt(key: CredentialKey, method: string | undefined): Promise<AuthorizationUiActionResult> {
+    let response: Awaited<ReturnType<AuthorizationClient['start']>>
     try {
-      const response = await this.remote.start({ key, ...method === undefined ? {} : { method } })
-      if (!response.ok) return failure(response)
-      if (!response.value.ok) return failure(response.value)
-      const attempt: AuthorizationAttemptView = {
-        id: response.value.value.attemptId,
-        status: 'running',
-        notices: Object.freeze([]),
-      }
-      this.replaceAttempt(key, attempt)
-      this.pumps.set(attempt.id, this.pump(key, attempt.id))
-      return ACTION_OK
+      response = await this.remote.start({ key, ...method === undefined ? {} : { method } })
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : this.t('startFailed') }
     }
+    if (!response.ok) return failure(response)
+    if (!response.value.ok) return failure(response.value)
+    const attempt: AuthorizationAttemptView = {
+      id: response.value.value.attemptId,
+      status: 'running',
+      notices: Object.freeze([]),
+    }
+    if (this.isDisposed()) {
+      await this.cancelForDisposal(attempt.id)
+      return ACTION_OK
+    }
+    this.replaceAttempt(key, attempt)
+    this.pumps.set(attempt.id, this.pump(key, attempt.id))
+    return ACTION_OK
   }
 
   /**
-   * Submit one prompt response.
+   * Submit one prompt response without replacing events received while its acknowledgment is pending.
    * @param key - credential record whose attempt owns the prompt.
    * @param value - exact response entered by the user.
    * @returns whether the active prompt accepted the response.
@@ -131,7 +153,10 @@ export class AuthorizationSettingsStore {
       })
       if (!response.ok) return failure(response)
       if (!response.value.ok) return failure(response.value)
-      this.replaceAttempt(key, { ...attempt, prompt: undefined })
+      const current = this.store.getSnapshot().attempts[key]
+      if (current?.id === attempt.id && current.prompt?.id === attempt.prompt.id) {
+        this.replaceAttempt(key, { ...current, prompt: undefined })
+      }
       return ACTION_OK
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : this.t('answerFailed') }
@@ -144,10 +169,28 @@ export class AuthorizationSettingsStore {
    * @returns whether the cancellation request was accepted.
    */
   async cancel(key: CredentialKey): Promise<AuthorizationUiActionResult> {
+    if (this.disposed) return { ok: false, message: this.t('unavailable') }
     const attempt = this.store.getSnapshot().attempts[key]
     if (attempt === undefined) return ACTION_OK
+    return this.cancelAttempt(attempt.id)
+  }
+
+  /** Coalesce cancellation of one accepted attempt through its completed response. */
+  private cancelAttempt(attemptId: AuthorizationAttemptId): Promise<AuthorizationUiActionResult> {
+    const current = this.cancellations.get(attemptId)
+    if (current !== undefined) return current
+    const pending = Promise.withResolvers<AuthorizationUiActionResult>()
+    this.cancellations.set(attemptId, pending.promise)
+    void this.requestCancellation(attemptId).then(pending.resolve, pending.reject)
+    const completed = (): void => { this.cancellations.delete(attemptId) }
+    void pending.promise.then(completed, completed)
+    return pending.promise
+  }
+
+  /** Convert one cancellation response into the same action result the UI consumes. */
+  private async requestCancellation(attemptId: AuthorizationAttemptId): Promise<AuthorizationUiActionResult> {
     try {
-      const response = await this.remote.cancel({ attemptId: attempt.id })
+      const response = await this.remote.cancel({ attemptId })
       if (!response.ok) return failure(response)
       if (!response.value.ok) return failure(response.value)
       return ACTION_OK
@@ -172,20 +215,43 @@ export class AuthorizationSettingsStore {
     }
   }
 
-  /** Stop polls and ask the Host to cancel every still-running attempt. */
-  async dispose(): Promise<void> {
-    if (this.disposed) return
+  /**
+   * Stop admission and await accepted starts, polls and cancellation responses.
+   * @returns The shared cleanup promise; rejects after all cleanup settles if a cancellation failed.
+   */
+  dispose(): Promise<void> {
+    if (this.disposal !== undefined) return this.disposal
     this.disposed = true
+    this.disposal = this.drain()
+    return this.disposal
+  }
+
+  /** Complete accepted operations while the caller retains the authorization client. */
+  private async drain(): Promise<void> {
     const attempts = Object.values(this.store.getSnapshot().attempts)
     for (const controller of this.polls.values()) controller.abort()
-    await Promise.all([
+    const cancelling = new Set([
+      ...this.cancellations.values(),
+      ...attempts.filter(attempt => attempt.status === 'running').map(attempt => this.cancelAttempt(attempt.id)),
+    ])
+    const results = await Promise.allSettled([
+      ...this.starts,
       ...this.pumps.values(),
-      ...attempts
-        .filter(attempt => attempt.status === 'running')
-        .map(attempt => this.remote.cancel({ attemptId: attempt.id }).catch(() => undefined)),
+      ...[...cancelling].map(async (task) => {
+        const result = await task
+        if (!result.ok) throw new Error(result.message)
+      }),
     ])
     this.polls.clear()
     this.pumps.clear()
+    const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
+    if (failures.length > 0) throw new AggregateError(failures, this.t('cancelFailed'))
+  }
+
+  /** A successful late start owns its cancellation even after the page has stopped. */
+  private async cancelForDisposal(attemptId: AuthorizationAttemptId): Promise<void> {
+    const result = await this.cancelAttempt(attemptId)
+    if (!result.ok) throw new Error(result.message)
   }
 
   /** Read disposal after async suspension without relying on stale control-flow narrowing. */

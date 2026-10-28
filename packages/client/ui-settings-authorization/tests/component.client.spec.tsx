@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { allowAllAccess, bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,7 @@ const PROMPT = '00000000-0000-4000-8000-000000000001' as never
 const SELECT_PROMPT = '00000000-0000-4000-8000-000000000002' as never
 const unusedHook = (() => { throw new Error('unused standard hook') }) as never
 const standardProps: GlobalStandardProps = {
+  ...allowAllAccess,
   usePanelInfo: selector => selector({ activePanelId: null }),
   useSessions: unusedHook,
   useSessionStatus: unusedHook,

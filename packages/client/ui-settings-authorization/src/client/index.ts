@@ -30,26 +30,39 @@ const NS = 'settings.authorization'
 /** Required services: slots, copy, and the authorization client. */
 export const inject = ['slots', 'locale', 'authorizationClient']
 
-/** Register the independent Accounts section over the authorization service. */
+/**
+ * Register the Accounts section and retain its copy through controller cleanup.
+ * @param ctx - Client context supplying slots, locale and authorization.
+ */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-authorization: dictionaries')
-  const t = ctx.locale.bind(NS)
-  const controller = new AuthorizationSettingsStore(ctx.authorizationClient, t)
-  const face: AuthorizationSectionInjected = {
-    hooks: { accounts: controller.store },
-    load: () => controller.load(),
-    start: (key, method) => controller.start(key, method),
-    answer: (key, value) => controller.answer(key, value),
-    cancel: key => controller.cancel(key),
-    forget: key => controller.forget(key),
-  }
-  ctx.effect(() => async () => { await controller.dispose() }, 'ui-settings-authorization: controller lifecycle')
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'accounts',
-    order: 12,
-    label: () => t('nav'),
-    locale: NS,
-    inject: () => face,
-  }, AuthorizationSection))
+  ctx.effect(() => {
+    const unregisterCopy = ctx.locale.register(NS, { zh, en })
+    try {
+      const t = ctx.locale.bind(NS)
+      const controller = new AuthorizationSettingsStore(ctx.authorizationClient, t)
+      const face: AuthorizationSectionInjected = {
+        hooks: { accounts: controller.store },
+        load: () => controller.load(),
+        start: (key, method) => controller.start(key, method),
+        answer: (key, value) => controller.answer(key, value),
+        cancel: key => controller.cancel(key),
+        forget: key => controller.forget(key),
+      }
+      ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
+        id: 'accounts',
+        order: 12,
+        label: () => t('nav'),
+        locale: NS,
+        inject: () => face,
+      }, AuthorizationSection))
+      return async () => {
+        try { await controller.dispose() }
+        finally { unregisterCopy() }
+      }
+    } catch (error) {
+      unregisterCopy()
+      throw error
+    }
+  }, 'ui-settings-authorization: controller lifecycle')
 }

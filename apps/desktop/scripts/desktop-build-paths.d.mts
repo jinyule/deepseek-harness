@@ -1,11 +1,12 @@
 import type { DesktopAutoUpdateTarget } from './desktop-auto-update-environment.mjs'
 
-/** Mutable target directories plus the shared immutable download cache. */
+/** Mutable target directories plus shared download and package caches. */
 export interface DesktopTargetBuildPaths {
   readonly root: string
   readonly artifacts: string
   readonly localArtifacts: string
   readonly unsignedArtifacts: string
+  readonly unnotarizedArtifacts: string
   readonly runtime: string
   readonly packageSet: string
   readonly dsh: string
@@ -15,6 +16,7 @@ export interface DesktopTargetBuildPaths {
   readonly packedVendor: string
   readonly packedLandlock: string
   readonly downloads: string
+  readonly pnpmStore: string
 }
 
 /**
@@ -33,9 +35,10 @@ export function resolveDesktopBuildTarget(
 /**
  * Return the mutable preparation and artifact directories owned by one release target.
  * @param target - Supported Desktop target name.
- * @returns Target paths plus the shared immutable download cache.
+ * @param environment - Packaging environment with an optional absolute cache directory.
+ * @returns Target paths plus shared download and package caches.
  */
-export function desktopTargetBuildPaths(target: DesktopAutoUpdateTarget): DesktopTargetBuildPaths
+export function desktopTargetBuildPaths(target: DesktopAutoUpdateTarget, environment?: NodeJS.ProcessEnv): DesktopTargetBuildPaths
 
 /**
  * Return the platform and architecture of the payload one release target prepares.
@@ -73,3 +76,14 @@ export function developmentRuntimeDirectory(
   hostPlatform?: NodeJS.Platform,
   hostArch?: string,
 ): string
+
+/**
+ * Select the output directory and filename suffix for one packaging mode.
+ * @param paths Target artifact directories.
+ * @param mode Validated packaging mode.
+ * @returns Matching artifact destination and filename marker.
+ */
+export function desktopArtifactOutput(
+  paths: Pick<DesktopTargetBuildPaths, 'artifacts' | 'localArtifacts' | 'unsignedArtifacts' | 'unnotarizedArtifacts'>,
+  mode: { unsigned: boolean, skipNotarization: boolean, local?: boolean },
+): { directory: string, suffix: string }

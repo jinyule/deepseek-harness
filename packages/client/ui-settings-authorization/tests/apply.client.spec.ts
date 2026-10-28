@@ -3,7 +3,7 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { AuthorizationSection } from '../src/client/AuthorizationSection.tsx'
 import { apply as applyHost } from '../src/index.ts'
 import { apply, inject } from '../src/client/index.ts'
@@ -11,6 +11,7 @@ import { apply, inject } from '../src/client/index.ts'
 /** Mount the section's replaceable client services. */
 async function bench(): Promise<{ ctx: Context; slots: SlotRegistry; locale: LocaleRuntime }> {
   const ctx = new Context()
+  onTestFinished(async () => { await ctx.fiber.dispose() })
   await ctx.plugin(SlotRegistry).await()
   const slots = ctx.get('slots') as SlotRegistry
   const locale = new LocaleRuntime(ctx)
@@ -38,6 +39,16 @@ describe('ui-settings-authorization apply', () => {
 
   it('declares the exact services it consumes', () => {
     expect(inject).toEqual(['slots', 'locale', 'authorizationClient'])
+  })
+
+  it('withdraws its dictionaries when the Accounts section cannot be registered', async () => {
+    const local = await bench()
+    local.slots.register({ name: 'settings.section', id: 'accounts', label: () => 'Existing' }, () => null)
+    const logged = vi.spyOn(local.ctx.logger, 'error').mockImplementation(() => local.ctx.logger)
+    onTestFinished(() => { logged.mockRestore() })
+    const fiber = local.ctx.plugin({ inject: [...inject], apply })
+    await expect(fiber.await()).rejects.toThrow('already has an entry with id "accounts"')
+    expect(local.locale.bind('settings.authorization')('nav')).toBe('nav')
   })
 
   it('registers a locale-following Accounts section for an authenticated page', async () => {
